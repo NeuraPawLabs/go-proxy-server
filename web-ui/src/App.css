@@ -1,0 +1,223 @@
+/* Global Styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f0f2f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-loading-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at top, rgba(24, 144, 255, 0.18), transparent 42%),
+    linear-gradient(180deg, #f7fbff 0%, #eef3f8 100%);
+}
+
+.admin-auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #f5f7fa;
+}
+
+.admin-auth-card {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08) !important;
+}
+
+.admin-auth-header {
+  text-align: center;
+}
+
+/* Smooth transitions */
+.ant-layout-sider {
+  transition: all 0.2s ease-in-out;
+}
+
+/* Card hover effects */
+.ant-card {
+  transition: all 0.3s ease;
+}
+
+.ant-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Button styles */
+.ant-btn {
+  transition: all 0.3s ease;
+}
+
+.ant-btn:hover {
+  transform: translateY(-1px);
+}
+
+/* Table styles */
+.ant-table-wrapper {
+  background: transparent;
+}
+
+.ant-table {
+  background: transparent;
+}
+
+.ant-table-thead > tr > th {
+  background: #fafafa;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: #f5f5f5;
+}
+
+/* Form styles */
+.ant-form-item-label > label {
+  font-weight: 500;
+}
+
+/* Statistic card styles */
+.ant-statistic-title {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.ant-statistic-content {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+/* Badge styles */
+.ant-badge-status-processing {
+  animation: antStatusProcessing 1.2s ease-in-out infinite;
+}
+
+@keyframes antStatusProcessing {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .ant-layout-sider {
+    position: fixed !important;
+    z-index: 999;
+  }
+
+  .ant-layout-content {
+    margin: 16px 8px !important;
+    padding: 16px !important;
+  }
+
+  .admin-auth-shell {
+    padding: 16px;
+  }
+}
+
+/* Loading overlay */
+.ant-spin-nested-loading > div > .ant-spin {
+  max-height: none;
+}
+
+/* Alert styles */
+.ant-alert {
+  border-radius: 8px;
+}
+
+/* Typography */
+h1.ant-typography,
+h2.ant-typography,
+h3.ant-typography {
+  margin-bottom: 0;
+}
+
+/* Divider */
+.ant-divider {
+  margin: 16px 0;
+}
+
+/* Input number */
+.ant-input-number {
+  border-radius: 6px;
+}
+
+/* Switch */
+.ant-switch {
+  min-width: 44px;
+}
+
+/* Menu */
+.ant-menu-dark .ant-menu-item-selected {
+  background-color: #1890ff !important;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Card title */
+.ant-card-head {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 16px 24px;
+}
+
+.ant-card-head-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Descriptions */
+.ant-descriptions-item-label {
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.ant-descriptions-item-content {
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.85);
+}

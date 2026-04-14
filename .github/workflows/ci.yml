@@ -1,0 +1,157 @@
+name: CI
+
+"on":
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+      - 'refactor/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web-ui
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: web-ui
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: web-ui
+        run: npm run build
+
+      - name: Copy frontend dist for embed
+        run: ./scripts/sync_frontend_dist.sh
+
+      - name: Upload embedded frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-frontend-ci
+          path: internal/web/dist
+          if-no-files-found: error
+
+  go-test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    needs: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download embedded frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-frontend-ci
+          path: internal/web/dist
+
+      - name: Run Go tests
+        run: go test -tags frontend_embed ./...
+
+  build-embedded:
+    name: Build Embedded App
+    runs-on: ubuntu-latest
+    needs:
+      - frontend
+      - go-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download embedded frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-frontend-ci
+          path: internal/web/dist
+
+      - name: Build app on Linux
+        env:
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          go build -tags frontend_embed -trimpath -ldflags="-s -w" -o dist/go-proxy-server ./cmd/server
+
+  cross-build:
+    name: Cross Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download embedded frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-frontend-ci
+          path: internal/web/dist
+
+      - name: Cross compile
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+
+          binary_name="go-proxy-server"
+          if [ "${GOOS}" = "windows" ]; then
+            binary_name="${binary_name}.exe"
+          fi
+
+          go build -tags frontend_embed -trimpath -ldflags="-s -w" -o "dist/${binary_name}" ./cmd/server

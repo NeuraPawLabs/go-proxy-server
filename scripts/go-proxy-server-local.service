@@ -1,0 +1,28 @@
+[Unit]
+Description=Go Proxy Server (SOCKS5 and HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/go-proxy-server
+ExecStart=/opt/go-proxy-server/bin/go-proxy-server both -socks-port 11223 -http-port 11224 -bind-listen
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/go-proxy-server.log
+StandardError=append:/var/log/go-proxy-server-error.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65535
+
+# Graceful shutdown
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

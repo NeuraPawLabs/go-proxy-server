@@ -1,0 +1,62 @@
+# Binaries (in root directory - legacy, should not be here)
+# All binaries are now in bin/ directory
+core
+
+# Database and data files
+credentials.db
+data.db
+*.db
+
+# Log files
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+build/
+dist/
+
+# Frontend
+web-ui/node_modules/
+web-ui/dist/
+web-ui/.vite/
+internal/web/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Windows resource files (auto-generated)
+*.syso
+*_windows_*.syso
+winres/
+resource.syso
+
+# Temporary files
+*.tmp
+*.temp
+sync.sh
+*.bak
+*.old
+
+# Local environment files
+.env
+.env.local
+
+# Icon generation (keep only internal/tray/icon.ico)
+icon.png
+icon_*.png
+icon_*.ico
+process_icon.py
+generate_icon_code.py
+icon_data.go

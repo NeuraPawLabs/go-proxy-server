@@ -1,0 +1,43 @@
+{
+  "FixedFileInfo": {
+    "FileVersion": {
+      "Major": 1,
+      "Minor": 2,
+      "Patch": 0,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 1,
+      "Minor": 2,
+      "Patch": 0,
+      "Build": 0
+    },
+    "FileFlagsMask": "3f",
+    "FileFlags": "00",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "Comments": "Antivirus-optimized build with pure Go implementation",
+    "CompanyName": "Go Proxy Server Project",
+    "FileDescription": "SOCKS5 and HTTP Proxy Server",
+    "FileVersion": "1.2.0.0",
+    "InternalName": "go-proxy-server",
+    "LegalCopyright": "Copyright (C) 2025-2026",
+    "LegalTrademarks": "",
+    "OriginalFilename": "go-proxy-server.exe",
+    "PrivateBuild": "",
+    "ProductName": "Go Proxy Server",
+    "ProductVersion": "1.2.0.0",
+    "SpecialBuild": ""
+  },
+  "VarFileInfo": {
+    "Translation": {
+      "LangID": "0409",
+      "CharsetID": "04B0"
+    }
+  },
+  "IconPath": "assets/app.ico",
+  "ManifestPath": "scripts/manifest.xml"
+}
