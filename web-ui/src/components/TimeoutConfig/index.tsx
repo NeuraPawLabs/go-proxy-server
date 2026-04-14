@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, Form, InputNumber, Button, Row, Col, message, Typography, Alert } from 'antd';
 import { ClockCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import { getTimeout, saveTimeout } from '../../api/timeout';
@@ -10,7 +10,7 @@ const TimeoutConfig: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
 
-  const loadTimeout = async () => {
+  const loadTimeout = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getTimeout();
@@ -21,18 +21,18 @@ const TimeoutConfig: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [form]);
 
   useEffect(() => {
-    loadTimeout();
-  }, []);
+    void loadTimeout();
+  }, [loadTimeout]);
 
   const handleSave = async (values: TimeoutConfigType) => {
     try {
       setLoading(true);
       await saveTimeout(values);
       message.success('超时配置保存成功，立即生效');
-      loadTimeout();
+      await loadTimeout();
     } catch (error) {
       console.error('Failed to save timeout config:', error);
       message.error('超时配置保存失败');

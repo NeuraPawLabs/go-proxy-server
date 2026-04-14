@@ -120,7 +120,7 @@ const AdminAuth: React.FC<AdminAuthProps> = ({
       captchaRef.current?.reset?.();
       throw submitError;
     }
-  }, [onSubmit]);
+  }, [bootstrapNeeded, onSubmit]);
 
   useEffect(() => {
     captchaRef.current?.destroy?.();

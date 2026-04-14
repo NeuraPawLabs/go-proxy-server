@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, Form, Switch, Button, Alert, message, Typography, Space, Row, Col } from 'antd';
 import { SettingOutlined, SaveOutlined, WindowsOutlined, CheckCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import { getSystemSettings, saveSystemSettings } from '../../api/system';
@@ -11,7 +11,7 @@ const SystemSettings: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState<SystemSettingsType | null>(null);
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getSystemSettings();
@@ -25,18 +25,18 @@ const SystemSettings: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [form]);
 
   useEffect(() => {
-    loadSettings();
-  }, []);
+    void loadSettings();
+  }, [loadSettings]);
 
   const handleSave = async (values: { autostartEnabled: boolean }) => {
     try {
       setLoading(true);
       await saveSystemSettings(values.autostartEnabled);
       message.success('系统设置保存成功');
-      loadSettings();
+      await loadSettings();
     } catch (error) {
       console.error('Failed to save system settings:', error);
       message.error('系统设置保存失败');
