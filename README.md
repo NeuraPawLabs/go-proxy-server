@@ -41,6 +41,36 @@ make build
 
 The Web UI binds to `localhost` only. If no port is specified, it uses a random available port and prints the actual URL in the startup log.
 
+### Start proxies directly without the Web admin UI
+
+These commands start the proxy servers directly in CLI foreground mode. They do not start the Web admin UI and they do not enter Windows tray mode.
+
+```bash
+# SOCKS5 only, default port 1080
+./bin/go-proxy-server socks
+
+# HTTP/HTTPS only, default port 8080
+./bin/go-proxy-server http
+
+# Start both SOCKS5 and HTTP/HTTPS
+./bin/go-proxy-server both
+```
+
+You can also pass explicit ports:
+
+```bash
+./bin/go-proxy-server socks -port 1080
+./bin/go-proxy-server http -port 8080
+./bin/go-proxy-server both -socks-port 1080 -http-port 8080
+```
+
+Notes:
+
+- `socks`, `http`, and `both` only use the current CLI flags. They do not restore proxy port or `AutoStart` settings saved from the Web UI.
+- These CLI modes still load users and the IP allowlist from SQLite, so you can prepare auth and allowlist state first with commands such as `adduser` and `addip`.
+- For multi-address hosts that need outbound connections to prefer the local IP that accepted the client connection, add `-bind-listen`, for example `./bin/go-proxy-server socks -port 1080 -bind-listen`.
+- The process stays in the foreground until you stop it with `Ctrl+C`.
+
 ### Environment configuration with `.env`
 
 The server now supports loading a local `.env` file before startup configuration is initialized.

@@ -41,6 +41,36 @@ make build
 
 Web 管理界面只监听 `localhost`。未指定端口时会自动分配一个可用随机端口，并在启动日志中输出实际访问地址。
 
+### 不启动 Web 管理界面，直接启动代理
+
+这些命令会以前台 CLI 方式直接启动代理服务，不会启动 Web 管理界面，也不会进入 Windows 托盘模式。
+
+```bash
+# 只启动 SOCKS5，默认端口 1080
+./bin/go-proxy-server socks
+
+# 只启动 HTTP/HTTPS，默认端口 8080
+./bin/go-proxy-server http
+
+# 同时启动 SOCKS5 和 HTTP/HTTPS
+./bin/go-proxy-server both
+```
+
+也可以显式指定端口：
+
+```bash
+./bin/go-proxy-server socks -port 1080
+./bin/go-proxy-server http -port 8080
+./bin/go-proxy-server both -socks-port 1080 -http-port 8080
+```
+
+补充说明：
+
+- `socks` / `http` / `both` 只会按当前命令行参数启动代理，不会读取 Web 后台里保存的代理端口或 `AutoStart` 配置。
+- 这几种 CLI 启动方式仍会加载 SQLite 里的用户和 IP 白名单配置，所以如果需要认证或白名单控制，可以先执行 `adduser`、`addip` 等命令。
+- 如需在多出口 IP 场景下让代理尽量复用客户端连入的本机 IP 发起外连，可追加 `-bind-listen`，例如 `./bin/go-proxy-server socks -port 1080 -bind-listen`。
+- 进程会持续前台运行，停止时直接 `Ctrl+C` 即可。
+
 ### 使用 `.env` 配置环境变量
 
 服务端现在支持在启动早期自动加载本地 `.env` 文件。
