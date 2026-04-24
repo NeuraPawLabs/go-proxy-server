@@ -2,24 +2,61 @@
 
 [English](README.md) | [文档索引](docs/README.zh-CN.md) | [更新日志](CHANGELOG.zh-CN.md)
 
-Go Proxy Server 是一个使用 Go 编写的轻量级自托管代理与内网穿透服务，支持 SOCKS5、HTTP/HTTPS、本地 Web 管理界面、Windows 托盘，以及“一个服务端 + 多个客户端”的集中式内网穿透管理模型。
+Go Proxy Server 是一个使用 Go 编写的自托管服务，单个二进制同时覆盖本地代理、仅监听本机的 Web 管理后台，以及集中式内网穿透管理。
 
-## 亮点特性
+## 它能做什么
 
-- 支持 SOCKS5 与 HTTP/HTTPS 代理
+- **代理服务：** 支持 SOCKS5、HTTP，或两者同时运行。
+- **Web 管理：** 通过本地 Web 后台管理用户、白名单、日志、代理配置和隧道路由。
+- **隧道控制面：** 支持一个 `tunnel-server` 管理多个常驻 `tunnel-client`。
+- **安全能力：** 提供用户名密码认证、IP 白名单、SSRF / DNS Rebinding 防护、审计日志与事件日志。
+- **跨平台运行：** Linux / macOS 默认进入 Web 模式，Windows 优先托盘模式。
+
+## 功能总览
+
+### 代理与访问控制
+
+- 支持 SOCKS5 代理
+- 支持 HTTP/HTTPS 代理
 - 用户名/密码认证，密码使用带随机盐的 SHA-256 存储
 - 支持 IP 白名单
-- SQLite 持久化，使用纯 Go 驱动
+- 支持多出口 IP 场景下的 `-bind-listen`
+- 认证、超时与限流配置支持运行时热更新
+
+### Web 管理与运维
+
 - Web 管理后台仅监听本机 `localhost`
-- 内置 Web 日志中心，支持审计日志与事件日志
-- 支持 Windows 托盘模式与命令行模式
-- 集中式内网穿透管理
-  - 一个 `tunnel-server`
-  - 多个常驻 `tunnel-client`
-  - 通过 Web 后台或 CLI 管理透传路由
-  - `classic` 引擎支持 TCP
-  - `quic` 引擎支持 TCP 与 UDP
-- 用户、白名单、超时和限流配置支持运行时热更新
+- 支持代理启停与持久化配置管理
+- Web 后台内置审计日志与事件日志中心
+- 使用 SQLite 持久化，驱动为纯 Go 实现
+- 在未嵌入完整前端资源的测试/构建环境下，会回退到轻量提示页
+
+### 内网穿透管理
+
+- 集中式模型：一个 `tunnel-server`，多个 `tunnel-client`
+- 路由可通过 Web 后台或 CLI 管理
+- `classic` 引擎支持 TCP
+- `quic` 引擎支持 TCP 与 UDP
+- 支持在指定端口范围内自动分配公网端口
+
+### 平台行为
+
+- Linux / macOS：无参数启动时进入本地 Web 管理模式
+- Windows：无参数启动时优先尝试系统托盘模式
+- 无参数启动会恢复已保存且启用了 `AutoStart` 的代理服务
+- 无参数启动不会自动启动 `tunnel-server` 或 `tunnel-client`
+
+## 运行模式总览
+
+| 模式 | 命令 | 作用 |
+| --- | --- | --- |
+| 默认模式 | `./bin/go-proxy-server` | Linux/macOS 启动 Web 后台，Windows 启动托盘或回退到 Web 模式 |
+| Web 管理 | `./bin/go-proxy-server web` | 启动仅监听 `localhost` 的 Web 后台 |
+| SOCKS5 | `./bin/go-proxy-server socks` | 前台启动 SOCKS5 代理 |
+| HTTP | `./bin/go-proxy-server http` | 前台启动 HTTP/HTTPS 代理 |
+| 双代理 | `./bin/go-proxy-server both` | 同时启动 SOCKS5 和 HTTP/HTTPS |
+| 隧道服务端 | `./bin/go-proxy-server tunnel-server ...` | 启动集中式内网穿透服务端 |
+| 隧道客户端 | `./bin/go-proxy-server tunnel-client ...` | 启动受控的内网穿透客户端 |
 
 ## 快速开始
 
@@ -29,103 +66,42 @@ Go Proxy Server 是一个使用 Go 编写的轻量级自托管代理与内网穿
 make build
 ```
 
-- `internal/web/dist` 属于构建产物，不会提交到 Git。
-- `make build` 与 GitHub Actions 会先编译前端，再带 `frontend_embed` 标签编译 Go 二进制。
-- 干净仓库里直接执行 `go test ./...` 也能通过，此时会使用一个轻量提示页替代完整 Web UI 资源。
+- `make build` 会先构建前端，再带 `frontend_embed` 标签编译 Go 二进制。
+- `internal/web/dist` 是构建产物，不会提交到仓库。
+- 干净仓库直接执行 `go test ./...` 也能工作，此时会使用轻量提示页替代完整前端资源。
 
-### 启动 Web 管理界面
+### 启动 Web 管理后台
 
 ```bash
 ./bin/go-proxy-server web
 ```
 
-Web 管理界面只监听 `localhost`。未指定端口时会自动分配一个可用随机端口，并在启动日志中输出实际访问地址。
+- Web 后台只监听 `localhost`。
+- 未指定端口时会自动选择一个可用随机端口，并在日志中输出实际访问地址。
 
-### 不启动 Web 管理界面，直接启动代理
-
-这些命令会以前台 CLI 方式直接启动代理服务，不会启动 Web 管理界面，也不会进入 Windows 托盘模式。
+### 直接启动代理服务
 
 ```bash
-# 只启动 SOCKS5，默认端口 1080
+# 只启动 SOCKS5
 ./bin/go-proxy-server socks
 
-# 只启动 HTTP/HTTPS，默认端口 8080
+# 只启动 HTTP/HTTPS
 ./bin/go-proxy-server http
 
-# 同时启动 SOCKS5 和 HTTP/HTTPS
+# 同时启动两种代理
 ./bin/go-proxy-server both
 ```
 
-也可以显式指定端口：
-
 ```bash
+# 显式指定端口
 ./bin/go-proxy-server socks -port 1080
 ./bin/go-proxy-server http -port 8080
 ./bin/go-proxy-server both -socks-port 1080 -http-port 8080
 ```
 
-补充说明：
-
-- `socks` / `http` / `both` 只会按当前命令行参数启动代理，不会读取 Web 后台里保存的代理端口或 `AutoStart` 配置。
-- 这几种 CLI 启动方式仍会加载 SQLite 里的用户和 IP 白名单配置，所以如果需要认证或白名单控制，可以先执行 `adduser`、`addip` 等命令。
-- 如需在多出口 IP 场景下让代理尽量复用客户端连入的本机 IP 发起外连，可追加 `-bind-listen`，例如 `./bin/go-proxy-server socks -port 1080 -bind-listen`。
-- 进程会持续前台运行，停止时直接 `Ctrl+C` 即可。
-
-### 使用 `.env` 配置环境变量
-
-服务端现在支持在启动早期自动加载本地 `.env` 文件。
-
-- 查找顺序：当前工作目录下的 `.env`，然后是可执行文件同目录下的 `.env`
-- 如果系统环境变量已存在，则优先使用系统环境变量，不会被 `.env` 覆盖
-- 本地开发可直接复制 `.env.example` 作为模板
-
-示例：
-
-```bash
-cp .env.example .env
-```
-
-```env
-GEETEST_ID=your_geetest_id
-GEETEST_KEY=your_geetest_key
-```
-
-建议仅在本地开发中使用 `.env`；生产环境优先使用真实环境变量或部署系统的 Secret 注入方式。
-
-行为说明：
-
-- 如果 `GEETEST_ID` 和 `GEETEST_KEY` 都未配置，则不会启用验证码，管理后台使用密码直接登录
-- 如果两者都已配置，则管理后台登录会启用验证码
-- 如果只配置了其中一个，则会被视为配置错误，登录会被拒绝
-
-### 审计日志与事件日志
-
-Web 管理后台现在提供独立的 `日志中心` 页面，日志会持久化到 SQLite。
-
-- `审计日志` 用于记录管理面上的关键操作是谁、在什么时候、对什么对象做了什么
-  - 初始化管理密码、后台登录/退出
-  - 用户与白名单维护
-  - 代理启停与代理配置更新
-  - 系统配置修改、退出应用请求
-  - 内网穿透服务端、证书、路由等后台操作
-- `事件日志` 用于记录运行时与安全侧的重要事件
-  - 隧道客户端连接/断开、路由暴露成功或失败
-  - 登录失败、验证码校验失败等认证异常
-  - 限流拦截、SSRF / DNS Rebinding 防护命中
-  - 隧道数据面失败及其他运维告警
-
-两类日志都写入同一个应用 SQLite 数据库（应用数据目录下的 `data.db`），可在 Web UI 中按时间范围、分类、级别、状态和关键字进行过滤查看。
-
-### 无参数直接启动
-
-```bash
-./bin/go-proxy-server
-```
-
-- Linux / macOS：直接启动本地 Web 管理后台
-- Windows：优先尝试系统托盘模式，失败后回退到本地 Web 管理后台
-- 会恢复之前保存为 `AutoStart` 的代理服务
-- 不会自动启动 `tunnel-server` 或 `tunnel-client`
+- 这些 CLI 模式都会以前台运行，停止时直接 `Ctrl+C`。
+- 这些模式只使用当前命令行参数，不会恢复 Web 后台保存的代理端口配置。
+- 但它们仍会加载 SQLite 中的用户和白名单状态。
 
 ### 添加用户并启动 SOCKS5
 
@@ -134,9 +110,43 @@ Web 管理后台现在提供独立的 `日志中心` 页面，日志会持久化
 ./bin/go-proxy-server socks -port 1080
 ```
 
-### 启动集中式内网穿透
+## 常用命令
 
-Classic 引擎示例：
+### 用户与白名单管理
+
+```bash
+./bin/go-proxy-server adduser -username alice -password secret123
+./bin/go-proxy-server deluser -username alice
+./bin/go-proxy-server listuser
+
+./bin/go-proxy-server addip -ip 192.168.1.100
+./bin/go-proxy-server delip -ip 192.168.1.100
+./bin/go-proxy-server listip
+```
+
+### 代理命令
+
+```bash
+./bin/go-proxy-server socks -port 1080 [-bind-listen]
+./bin/go-proxy-server http -port 8080 [-bind-listen]
+./bin/go-proxy-server both -socks-port 1080 -http-port 8080 [-bind-listen]
+```
+
+### 帮助与版本
+
+```bash
+./bin/go-proxy-server --help
+./bin/go-proxy-server --version
+```
+
+## 内网穿透概览
+
+Go Proxy Server 提供两种集中式隧道引擎：
+
+- **`classic`：** 仅支持 TCP，部署模型更直接
+- **`quic`：** 支持 TCP 与 UDP，适合混合协议场景
+
+Classic 示例：
 
 ```bash
 # 服务端
@@ -156,18 +166,9 @@ Classic 引擎示例：
   -token demo-secret \
   -client node-shanghai-01 \
   -ca ca.pem
-
-# 通过命令行下发一条 TCP 路由
-./bin/go-proxy-server tunnel-save-route \
-  -client node-shanghai-01 \
-  -name mysql-prod \
-  -protocol tcp \
-  -target 127.0.0.1:3306 \
-  -public-port 33060 \
-  -enabled
 ```
 
-QUIC 引擎 + UDP 示例：
+QUIC 示例：
 
 ```bash
 # 服务端
@@ -187,50 +188,67 @@ QUIC 引擎 + UDP 示例：
   -token demo-secret \
   -client node-shanghai-01 \
   -ca ca.pem
-
-# 通过命令行下发一条 UDP 路由
-./bin/go-proxy-server tunnel-save-route \
-  -client node-shanghai-01 \
-  -name dns-local \
-  -protocol udp \
-  -target 127.0.0.1:53 \
-  -public-port 1053 \
-  -udp-idle-timeout 60 \
-  -udp-max-payload 1200 \
-  -enabled
 ```
 
-证书生成示例见 `docs/tunnel.zh-CN.md`。
+补充说明：
 
-说明：
-
-- 路由的 `-public-port 0` 表示自动分配端口。
-- 如果配置了 `-auto-port-start` / `-auto-port-end`，自动分配会只在该端口范围内挑选可用端口。
-- 这很适合与云平台安全组预留的固定端口段配合使用。
+- `-public-port 0` 表示自动分配公网端口。
 - `udp` 路由要求服务端和客户端都运行在 `quic` 引擎下。
-- Web 后台同时提供服务端模式和客户端模式。
-- Web 后台的客户端模式只支持校验证书后的 TLS 连接：可以上传 CA，也可以在本机同时启用服务端模式时自动复用本机托管 CA。
-- CLI 仍保留 `-allow-insecure` 与 `-insecure-skip-verify` 作为测试或兼容参数，但不建议在生产环境使用。
+- Web 后台同时支持服务端工作台和客户端工作台。
+- CLI 仍保留不安全连接参数用于测试或迁移，但默认推荐使用校验证书后的 TLS。
+- 更完整的证书、路由与操作示例见 [docs/tunnel.zh-CN.md](docs/tunnel.zh-CN.md)。
 
-## 推荐文档入口
+## 配置与运行说明
+
+### `.env` 支持
+
+程序会在初始化配置前尝试加载本地 `.env` 文件。
+
+- 查找顺序：当前工作目录，其次是可执行文件所在目录
+- 如果系统环境变量已存在，则优先使用系统环境变量
+- 建议仅用于本地开发
+
+示例：
+
+```bash
+cat > .env <<'EOF'
+GEETEST_ID=your_geetest_id
+GEETEST_KEY=your_geetest_key
+EOF
+```
+
+验证码行为：
+
+- `GEETEST_ID` 和 `GEETEST_KEY` 都未设置时，不启用验证码
+- 两者都设置时，启用验证码
+- 只设置其中一个时，登录会因配置错误被拒绝
+
+### 数据与日志
+
+- 应用数据保存在平台对应的应用数据目录
+- 主 SQLite 数据库文件为 `data.db`
+- CLI 与 Web 模式都会输出日志到 stdout/stderr，并写入 `app.log`
+- Windows 托盘模式也会把运行日志写入应用数据目录下的 `app.log`
+
+### Web 后台日志中心
+
+Web 管理后台内置基于 SQLite 的日志中心：
+
+- **审计日志：** 记录登录登出、用户维护、白名单修改、代理配置变更、隧道管理等管理面操作
+- **事件日志：** 记录认证失败、验证码失败、SSRF / DNS 防护命中、隧道失败及其他运行时安全/运维事件
+
+## 文档导航
+
+如果你需要更详细的说明，建议从这里继续：
 
 - [文档索引](docs/README.zh-CN.md)
 - [快速开始](docs/getting-started.zh-CN.md)
 - [内网穿透说明](docs/tunnel.zh-CN.md)
 - [Windows 使用与构建](docs/windows.zh-CN.md)
-- [英文文档入口](docs/README.md)
+- [English documentation index](docs/README.md)
 
 ## 贡献与安全
 
 - [贡献指南](CONTRIBUTING.zh-CN.md)
 - [安全策略](SECURITY.zh-CN.md)
 - [架构说明](CLAUDE.md)
-
-## 平台说明
-
-- Linux / macOS 在无参数启动时默认进入 Web 管理模式。
-- Windows 在无参数启动时优先进入系统托盘模式。
-- 无参数启动时，可能会自动恢复已保存且启用了 `AutoStart` 的代理服务。
-- 无参数启动时，不会自动启动内网穿透服务端或客户端进程。
-- CLI 模式默认输出日志到标准输出/标准错误。
-- Windows 托盘模式默认写入应用数据目录中的 `app.log`。

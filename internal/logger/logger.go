@@ -60,13 +60,13 @@ func Init() error {
 	// In GUI mode stdout may be discarded, but file logging still works.
 	initLoggers(io.MultiWriter(logFile, os.Stdout))
 
-	Info("=== Go Proxy Server Started ===")
-	Info("Log file: %s", logPath)
-	Info("Working directory: %s", func() string {
+	Debug("=== Go Proxy Server Started ===")
+	Debug("Log file: %s", logPath)
+	Debug("Working directory: %s", func() string {
 		wd, _ := os.Getwd()
 		return wd
 	}())
-	Info("Executable: %s", os.Args[0])
+	Debug("Executable: %s", os.Args[0])
 
 	return nil
 }
@@ -98,7 +98,7 @@ func GetLevel() LogLevel {
 // Close closes the log file
 func Close() {
 	if logFile != nil {
-		Info("=== Go Proxy Server Stopped ===")
+		Debug("=== Go Proxy Server Stopped ===")
 		logFile.Close()
 	}
 }

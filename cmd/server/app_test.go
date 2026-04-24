@@ -123,6 +123,51 @@ func TestAppRunUnknownCommandWritesUsageToStderr(t *testing.T) {
 	}
 }
 
+func TestAppRunHelpFlagWritesUsageToStdout(t *testing.T) {
+	db := newTestDB(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	app := NewApp(db, &stdout, &stderr)
+	if err := app.Run([]string{"--help"}); err != nil {
+		t.Fatalf("help run returned error: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "Usage:\n") {
+		t.Fatalf("expected usage on stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "--help") {
+		t.Fatalf("expected global help flag in usage, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr for help: %q", stderr.String())
+	}
+}
+
+func TestAppRunVersionFlagWritesVersionToStdout(t *testing.T) {
+	db := newTestDB(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	originalVersion := version
+	version = "test-version"
+	defer func() {
+		version = originalVersion
+	}()
+
+	app := NewApp(db, &stdout, &stderr)
+	if err := app.Run([]string{"--version"}); err != nil {
+		t.Fatalf("version run returned error: %v", err)
+	}
+
+	if got := stdout.String(); got != "test-version\n" {
+		t.Fatalf("unexpected version output: got %q want %q", got, "test-version\n")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr for version: %q", stderr.String())
+	}
+}
+
 func TestAppRunDefaultModeWritesTrayFallbackToStdout(t *testing.T) {
 	db := newTestDB(t)
 	origGOOS := currentGOOS

@@ -2,24 +2,61 @@
 
 [中文说明](README.zh-CN.md) | [Documentation](docs/README.md) | [Change Log](CHANGELOG.md) | [中文更新日志](CHANGELOG.zh-CN.md)
 
-Go Proxy Server is a compact self-hosted proxy and tunnel service written in Go. It provides SOCKS5 and HTTP proxying, local-only Web administration, Windows tray support, and a centralized tunnel control plane for managing multiple connected clients from a single server.
+Go Proxy Server is a self-hosted Go service that combines local proxy access, a localhost-only Web admin UI, and centralized tunnel management in one binary.
 
-## Highlights
+## What It Does
 
-- SOCKS5 and HTTP/HTTPS proxy support
-- Username/password auth with salted SHA-256 storage
+- **Proxy services:** Run SOCKS5, HTTP, or both at the same time.
+- **Web admin:** Manage users, allowlists, logs, proxy config, and tunnel routes from a local Web UI.
+- **Tunnel control plane:** Run one `tunnel-server` and manage multiple long-lived `tunnel-client` agents.
+- **Security features:** Username/password auth, IP allowlist, SSRF and DNS rebinding protection, audit logs, and event logs.
+- **Cross-platform runtime:** Linux and macOS default to Web mode, Windows prefers tray mode.
+
+## Capability Overview
+
+### Proxy and Access Control
+
+- SOCKS5 proxy support
+- HTTP/HTTPS proxy support
+- Username/password authentication with salted SHA-256 storage
 - IP allowlist support
-- SQLite storage with a pure Go driver
-- Local-only Web admin UI
-- Built-in audit log and event log center in the Web UI
-- Windows tray mode and CLI mode
-- Centralized tunnel management
-  - one `tunnel-server`
-  - multiple long-lived `tunnel-client` agents
-  - route management from Web UI or CLI
-  - `classic` engine for TCP
-  - `quic` engine for TCP and UDP
-- Runtime config reload for auth, timeout, and limiter settings
+- Optional `-bind-listen` mode for multi-address hosts
+- Runtime reload for auth, timeout, and limiter configuration
+
+### Web Admin and Operations
+
+- Local-only Web admin UI bound to `localhost`
+- Proxy start/stop and saved configuration management
+- Audit log and event log center in the Web UI
+- SQLite persistence with a pure Go driver
+- Default fallback page for test/build environments without embedded frontend assets
+
+### Tunnel Management
+
+- Centralized model: one `tunnel-server`, multiple `tunnel-client` agents
+- Route management from Web UI or CLI
+- `classic` engine for TCP
+- `quic` engine for TCP and UDP
+- Auto-assigned public ports within a configured port range
+
+### Platform Behavior
+
+- Linux/macOS: no-argument startup launches the local Web admin UI
+- Windows: no-argument startup prefers tray mode, then falls back to Web mode
+- No-argument startup restores saved proxy services marked with `AutoStart`
+- No-argument startup does not auto-start `tunnel-server` or `tunnel-client`
+
+## Runtime Modes
+
+| Mode | Command | What it does |
+| --- | --- | --- |
+| Default | `./bin/go-proxy-server` | Starts Web admin on Linux/macOS, tray or Web mode on Windows |
+| Web admin | `./bin/go-proxy-server web` | Starts the localhost-only Web UI |
+| SOCKS5 | `./bin/go-proxy-server socks` | Starts a foreground SOCKS5 proxy |
+| HTTP | `./bin/go-proxy-server http` | Starts a foreground HTTP/HTTPS proxy |
+| Both proxies | `./bin/go-proxy-server both` | Starts SOCKS5 and HTTP/HTTPS together |
+| Tunnel server | `./bin/go-proxy-server tunnel-server ...` | Starts centralized tunnel server mode |
+| Tunnel client | `./bin/go-proxy-server tunnel-client ...` | Starts a managed tunnel client agent |
 
 ## Quick Start
 
@@ -29,114 +66,87 @@ Go Proxy Server is a compact self-hosted proxy and tunnel service written in Go.
 make build
 ```
 
-- `internal/web/dist` is generated during build and is not committed to Git.
-- `make build` and the GitHub workflows build the frontend first, then compile Go with the `frontend_embed` tag.
-- A plain `go test ./...` from a clean checkout still works and serves a small fallback page instead of the full Web UI bundle.
+- `make build` builds the frontend first, then compiles Go with the `frontend_embed` tag.
+- `internal/web/dist` is a build artifact and is not committed.
+- `go test ./...` still works from a clean checkout and serves a small fallback page instead of the full UI bundle.
 
-### Start the Web admin UI
+### Start the Web Admin UI
 
 ```bash
 ./bin/go-proxy-server web
 ```
 
-The Web UI binds to `localhost` only. If no port is specified, it uses a random available port and prints the actual URL in the startup log.
+- The Web UI binds to `localhost` only.
+- If no port is specified, the server selects a random available port and prints the actual URL.
 
-### Start proxies directly without the Web admin UI
-
-These commands start the proxy servers directly in CLI foreground mode. They do not start the Web admin UI and they do not enter Windows tray mode.
+### Start Proxy Services Directly
 
 ```bash
-# SOCKS5 only, default port 1080
+# SOCKS5 only
 ./bin/go-proxy-server socks
 
-# HTTP/HTTPS only, default port 8080
+# HTTP/HTTPS only
 ./bin/go-proxy-server http
 
-# Start both SOCKS5 and HTTP/HTTPS
+# Both proxy types
 ./bin/go-proxy-server both
 ```
 
-You can also pass explicit ports:
-
 ```bash
+# Explicit ports
 ./bin/go-proxy-server socks -port 1080
 ./bin/go-proxy-server http -port 8080
 ./bin/go-proxy-server both -socks-port 1080 -http-port 8080
 ```
 
-Notes:
+- These CLI modes run in the foreground until `Ctrl+C`.
+- These modes use current CLI flags only. They do not restore saved proxy ports from the Web UI.
+- They still load users and allowlist state from SQLite.
 
-- `socks`, `http`, and `both` only use the current CLI flags. They do not restore proxy port or `AutoStart` settings saved from the Web UI.
-- These CLI modes still load users and the IP allowlist from SQLite, so you can prepare auth and allowlist state first with commands such as `adduser` and `addip`.
-- For multi-address hosts that need outbound connections to prefer the local IP that accepted the client connection, add `-bind-listen`, for example `./bin/go-proxy-server socks -port 1080 -bind-listen`.
-- The process stays in the foreground until you stop it with `Ctrl+C`.
-
-### Environment configuration with `.env`
-
-The server now supports loading a local `.env` file before startup configuration is initialized.
-
-- Lookup order: `.env` in the current working directory, then `.env` next to the executable
-- Existing shell environment variables win over `.env`
-- Use `.env.example` as the template for local development
-
-Example:
-
-```bash
-cp .env.example .env
-```
-
-```env
-GEETEST_ID=your_geetest_id
-GEETEST_KEY=your_geetest_key
-```
-
-Use `.env` for local development only. In production, prefer real environment variables or your service manager's secret injection.
-
-Behavior summary:
-
-- If both `GEETEST_ID` and `GEETEST_KEY` are unset, captcha is disabled and admin login uses password only
-- If both are set, captcha is enabled for admin login
-- If only one is set, login is rejected as a configuration error
-
-### Audit and event logs
-
-The Web admin now includes a dedicated `日志中心` / Logs page backed by SQLite persistence.
-
-- `Audit logs` capture who changed what in the admin plane
-  - bootstrap and admin login/logout
-  - user and allowlist maintenance
-  - proxy start/stop and proxy config changes
-  - system config updates, shutdown requests
-  - tunnel server, certificates, and route management
-- `Event logs` capture important runtime and security signals
-  - tunnel client connect/disconnect and route expose results
-  - auth and captcha failures
-  - rate-limit blocks, SSRF / DNS rebinding protection hits
-  - tunnel data-plane failures and other operational warnings
-
-Both log streams are stored in the same application SQLite database (`data.db` in the app data directory) and can be filtered by time window, category, severity, status, and keyword from the Web UI.
-
-### Start with no arguments
-
-```bash
-./bin/go-proxy-server
-```
-
-- Linux and macOS: starts the local Web admin UI directly
-- Windows: tries tray mode first, then falls back to the local Web admin UI if tray startup fails
-- restores proxy services that were previously saved with `AutoStart`
-- does not start `tunnel-server` or `tunnel-client` automatically
-
-### Add a user and start a SOCKS5 proxy
+### Add a User and Start a SOCKS5 Proxy
 
 ```bash
 ./bin/go-proxy-server adduser -username alice -password secret123
 ./bin/go-proxy-server socks -port 1080
 ```
 
-### Start centralized tunnel mode
+## Common Commands
 
-Classic engine example:
+### User and Allowlist Management
+
+```bash
+./bin/go-proxy-server adduser -username alice -password secret123
+./bin/go-proxy-server deluser -username alice
+./bin/go-proxy-server listuser
+
+./bin/go-proxy-server addip -ip 192.168.1.100
+./bin/go-proxy-server delip -ip 192.168.1.100
+./bin/go-proxy-server listip
+```
+
+### Proxy Commands
+
+```bash
+./bin/go-proxy-server socks -port 1080 [-bind-listen]
+./bin/go-proxy-server http -port 8080 [-bind-listen]
+./bin/go-proxy-server both -socks-port 1080 -http-port 8080 [-bind-listen]
+```
+
+### Help and Version
+
+```bash
+./bin/go-proxy-server --help
+./bin/go-proxy-server --version
+```
+
+## Tunnel Overview
+
+Go Proxy Server supports centralized tunnel management with two engines:
+
+- **`classic`:** TCP only, simpler deployment model
+- **`quic`:** TCP and UDP, better fit for mixed protocols and UDP routes
+
+Classic example:
 
 ```bash
 # server
@@ -156,18 +166,9 @@ Classic engine example:
   -token demo-secret \
   -client node-shanghai-01 \
   -ca ca.pem
-
-# create a TCP route from CLI
-./bin/go-proxy-server tunnel-save-route \
-  -client node-shanghai-01 \
-  -name mysql-prod \
-  -protocol tcp \
-  -target 127.0.0.1:3306 \
-  -public-port 33060 \
-  -enabled
 ```
 
-QUIC engine example with UDP:
+QUIC example:
 
 ```bash
 # server
@@ -187,54 +188,67 @@ QUIC engine example with UDP:
   -token demo-secret \
   -client node-shanghai-01 \
   -ca ca.pem
-
-# create a UDP route from CLI
-./bin/go-proxy-server tunnel-save-route \
-  -client node-shanghai-01 \
-  -name dns-local \
-  -protocol udp \
-  -target 127.0.0.1:53 \
-  -public-port 1053 \
-  -udp-idle-timeout 60 \
-  -udp-max-payload 1200 \
-  -enabled
 ```
 
-Certificate generation example: see `docs/tunnel.md`.
+Tunnel notes:
 
-Notes:
-
-- `-public-port 0` means auto-assign a public port for the route.
-- If `-auto-port-start` and `-auto-port-end` are set on `tunnel-server`, auto-assignment stays inside that range.
-- This is useful when your cloud firewall or security group reserves a dedicated tunnel port block.
+- `-public-port 0` means auto-assign a public port.
 - `udp` routes require the `quic` engine on both server and client.
-- The Web UI supports both `server` and `client` workbench modes.
-- The Web UI client mode uses verified TLS only. Upload a CA file, or let it automatically reuse the locally managed server CA when the same node also runs tunnel server mode.
-- CLI still exposes `-allow-insecure` and `-insecure-skip-verify` for testing and migration, but they are not recommended for production.
+- The Web UI supports both server-side and client-side tunnel workbenches.
+- CLI still exposes insecure flags for testing and migration, but verified TLS is the recommended default.
+- Full certificate and route examples live in [docs/tunnel.md](docs/tunnel.md).
 
-## Documentation
+## Configuration and Runtime Notes
+
+### `.env` Support
+
+The binary loads a local `.env` before startup configuration is initialized.
+
+- Search order: current working directory, then the executable directory
+- Existing shell environment variables win over `.env`
+- Recommended for local development only
+
+Example:
+
+```bash
+cat > .env <<'EOF'
+GEETEST_ID=your_geetest_id
+GEETEST_KEY=your_geetest_key
+EOF
+```
+
+Captcha behavior:
+
+- If both `GEETEST_ID` and `GEETEST_KEY` are unset, captcha is disabled
+- If both are set, captcha is enabled
+- If only one is set, login is rejected as a configuration error
+
+### Data and Logs
+
+- Application data is stored in the platform-specific app data directory
+- Main SQLite file: `data.db`
+- CLI and Web modes log to stdout/stderr and `app.log`
+- Windows tray mode writes operational logs to `app.log` in the app data directory
+
+### Logs in the Web UI
+
+The Web admin includes a dedicated Logs page backed by SQLite:
+
+- **Audit logs:** admin-plane changes such as login/logout, user updates, allowlist changes, proxy config changes, tunnel management actions
+- **Event logs:** runtime and security signals such as auth failures, captcha failures, SSRF/DNS protection hits, tunnel failures, and operational warnings
+
+## Documentation Map
+
+Start here if you want more detail:
 
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
 - [Tunnel management](docs/tunnel.md)
+- [Windows guide](docs/windows.md)
 - [Chinese documentation index](docs/README.zh-CN.md)
-- [Windows guide (Chinese)](docs/windows.zh-CN.md)
 
-## Project Status
-
-This repository is organized as an open-source project, but some historical operational notes in `docs/` are still more detailed than typical public-facing docs. The main entry points above are the recommended starting points.
-
-## For Contributors
+## Contributing and Security
 
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Architecture notes](CLAUDE.md)
-
-## Platform Notes
-
-- Linux and macOS default to Web admin mode when no command is provided.
-- Windows prefers tray mode when no command is provided.
-- No-argument startup may automatically restore saved proxy services marked with `AutoStart`.
-- No-argument startup does not automatically start tunnel server/client processes.
-- CLI mode logs to stdout/stderr by default.
-- Windows tray mode writes logs to `app.log` in the application data directory.

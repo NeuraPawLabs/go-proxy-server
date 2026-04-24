@@ -16,8 +16,10 @@ FRONTEND_SYNC_SCRIPT=./scripts/sync_frontend_dist.sh
 GO_BUILD_TAGS=frontend_embed
 
 # Build flags
-LDFLAGS=-s -w
-WINDOWS_GUI_LDFLAGS=-s -w -H=windowsgui
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION_PKG=main.version
+LDFLAGS=-s -w -X $(VERSION_PKG)=$(VERSION)
+WINDOWS_GUI_LDFLAGS=-s -w -H=windowsgui -X $(VERSION_PKG)=$(VERSION)
 
 # Default target
 all: build

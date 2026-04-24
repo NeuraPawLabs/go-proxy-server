@@ -73,6 +73,9 @@ func NewApp(db *gorm.DB, stdout, stderr io.Writer) *App {
 }
 
 func (a *App) Run(args []string) error {
+	if handleGlobalCLIArgs(args, a.stdout) {
+		return nil
+	}
 	if len(args) == 0 {
 		return a.startDefaultMode()
 	}
@@ -87,22 +90,22 @@ func (a *App) Run(args []string) error {
 }
 
 func (a *App) startDefaultMode() error {
-	applogger.Info("Starting in default mode (no arguments)")
-	applogger.Info("Platform: %s", currentGOOS())
+	applogger.Debug("Starting in default mode (no arguments)")
+	applogger.Debug("Platform: %s", currentGOOS())
 
 	if currentGOOS() == "windows" {
-		applogger.Info("Windows detected - attempting to start system tray application")
+		applogger.Debug("Windows detected - attempting to start system tray application")
 		if err := startTrayModeFn(a.db, 0); err == nil {
 			return nil
 		}
 
-		applogger.Info("Falling back to web server mode")
+		applogger.Debug("Falling back to web server mode")
 		fmt.Fprintln(a.stdout, "系统托盘启动失败，切换到Web服务器模式...")
 		fmt.Fprintln(a.stdout, "System tray failed to start, falling back to web server mode...")
 		return startWebModeFn(a.db, 0)
 	}
 
-	applogger.Info("Non-Windows platform - starting web server directly")
+	applogger.Debug("Non-Windows platform - starting web server directly")
 	return startWebModeFn(a.db, 0)
 }
 
@@ -474,6 +477,13 @@ func printUsage() {
 
 func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  go-proxy-server [--help] [--version]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Global options:")
+	fmt.Fprintln(w, "  help, -h, --help       Show this help message")
+	fmt.Fprintln(w, "  version, -v, --version Show version information")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
 	for _, spec := range commandSpecs {
 		fmt.Fprintf(w, "  %s\n", spec.usage)
 	}

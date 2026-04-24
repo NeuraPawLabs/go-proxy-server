@@ -22,7 +22,6 @@ import (
 	"github.com/apeming/go-proxy-server/internal/constants"
 	applogger "github.com/apeming/go-proxy-server/internal/logger"
 	"github.com/apeming/go-proxy-server/internal/metrics"
-	"github.com/apeming/go-proxy-server/internal/models"
 	"github.com/apeming/go-proxy-server/internal/proxy"
 	"github.com/apeming/go-proxy-server/internal/singleinstance"
 	"github.com/apeming/go-proxy-server/internal/tray"
@@ -46,6 +45,8 @@ var (
 	startWebModeFn         = startWebMode
 	singleInstanceCheckFn  = singleinstance.Check
 	currentArgsFn          = func() []string { return os.Args }
+	closeAllTransportsFn   = proxy.CloseAllTransports
+	exitProcessFn          = os.Exit
 	waitForExitAckFn       = func() {
 		_, _ = fmt.Fscanln(os.Stdin)
 	}
@@ -57,12 +58,15 @@ func setupCleanupHandler() {
 
 	go func() {
 		<-sigChan
-		applogger.Info("Received shutdown signal, cleaning up...")
-		proxy.CloseAllTransports()
-		applogger.Info("All transport connections closed")
-		applogger.Close()
-		os.Exit(0)
+		shutdownService()
 	}()
+}
+
+func shutdownService() {
+	applogger.Info("Shutting down...")
+	closeAllTransportsFn()
+	applogger.Close()
+	exitProcessFn(0)
 }
 
 func onAuthReloadError(err error) {
@@ -161,7 +165,7 @@ func initializeDatabase() (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database path: %w", err)
 	}
-	applogger.Info("Config loaded - DB: %s", dbPath)
+	applogger.Debug("Config loaded - DB: %s", dbPath)
 
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -169,47 +173,32 @@ func initializeDatabase() (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	applogger.Info("Database opened successfully")
+	applogger.Debug("Database opened successfully")
 
-	err = db.AutoMigrate(
-		&models.User{},
-		&models.Whitelist{},
-		&models.ProxyConfig{},
-		&models.SystemConfig{},
-		&models.TunnelClient{},
-		&models.TunnelRoute{},
-		&models.MetricsSnapshot{},
-		&models.AlertConfig{},
-		&models.AlertHistory{},
-		&models.AuditLog{},
-		&models.EventLog{},
-	)
+	err = migrateDatabase(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
-	if err := models.EnsureTunnelConstraints(db); err != nil {
-		return nil, fmt.Errorf("failed to apply tunnel constraints: %w", err)
-	}
-	applogger.Info("Database migration completed")
+	applogger.Debug("Database migration completed")
 
 	metrics.InitCollector(db, 10*time.Second)
-	applogger.Info("Metrics collector initialized")
+	applogger.Debug("Metrics collector initialized")
 
 	if err := config.InitTimeout(db); err != nil {
 		return nil, fmt.Errorf("failed to initialize timeout configuration: %w", err)
 	}
-	applogger.Info("Timeout configuration initialized")
+	applogger.Debug("Timeout configuration initialized")
 	config.StartTimeoutReloader(db)
 
 	if err := config.InitLimiterConfig(db); err != nil {
 		return nil, fmt.Errorf("failed to initialize connection limiter configuration: %w", err)
 	}
-	applogger.Info("Connection limiter configuration initialized")
+	applogger.Debug("Connection limiter configuration initialized")
 
 	if err := config.InitSecurityConfig(db); err != nil {
 		return nil, fmt.Errorf("failed to initialize security configuration: %w", err)
 	}
-	applogger.Info("Security configuration initialized")
+	applogger.Debug("Security configuration initialized")
 
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -218,7 +207,7 @@ func initializeDatabase() (*gorm.DB, error) {
 	sqlDB.SetMaxIdleConns(constants.DBMaxIdleConns)
 	sqlDB.SetMaxOpenConns(constants.DBMaxOpenConns)
 	sqlDB.SetConnMaxLifetime(constants.DBConnMaxLifetime)
-	applogger.Info("Database connection pool configured")
+	applogger.Debug("Database connection pool configured")
 
 	activity.SetRecorder(activity.NewDBRecorder(db, 2048))
 
@@ -231,6 +220,9 @@ func NewBootstrap(stdout, stderr io.Writer) (*Bootstrap, bool, error) {
 	}
 	if stderr == nil {
 		stderr = io.Discard
+	}
+	if handleGlobalCLIArgs(currentArgsFn()[1:], stdout) {
+		return nil, true, nil
 	}
 
 	releaseInstance, ok := ensureSingleInstanceFn(stdout, stderr)
@@ -260,9 +252,9 @@ func NewBootstrap(stdout, stderr io.Writer) (*Bootstrap, bool, error) {
 	}
 
 	setupCleanupHandlerFn()
-	applogger.Info("Go Proxy Server starting...")
-	applogger.Info("Command line arguments: %v", currentArgsFn())
-	applogger.Info("Number of arguments: %d", len(currentArgsFn()))
+	applogger.Debug("Go Proxy Server starting...")
+	applogger.Debug("Command line arguments: %v", currentArgsFn())
+	applogger.Debug("Number of arguments: %d", len(currentArgsFn()))
 
 	db, err := initializeDatabaseFn()
 	if err != nil {
@@ -308,16 +300,28 @@ func startTrayMode(db *gorm.DB, port int) (err error) {
 	return tray.Start(db, port)
 }
 
+func reportBootstrapFailure(stderr io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	fmt.Fprintf(stderr, "Error: %v\n", err)
+	applogger.Error("Bootstrap failed: %v", err)
+}
+
 func main() {
 	applogger.InitStdout()
 	flag.Usage = printUsage
+	applogger.SetLevel(bootstrapLogLevel(currentArgsFn()[1:]))
 
 	bootstrap, handled, err := NewBootstrap(os.Stdout, os.Stderr)
 	if handled {
 		return
 	}
 	if err != nil {
-		applogger.Error("Bootstrap failed: %v", err)
+		reportBootstrapFailure(os.Stderr, err)
 		return
 	}
 	defer bootstrap.Close()
