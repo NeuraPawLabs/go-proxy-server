@@ -212,16 +212,9 @@ QUIC 示例：
 
 ```bash
 cat > .env <<'EOF'
-GEETEST_ID=your_geetest_id
-GEETEST_KEY=your_geetest_key
+GPS_ADMIN_BOOTSTRAP_TOKEN=change-me
 EOF
 ```
-
-验证码行为：
-
-- `GEETEST_ID` 和 `GEETEST_KEY` 都未设置时，不启用验证码
-- 两者都设置时，启用验证码
-- 只设置其中一个时，登录会因配置错误被拒绝
 
 ### 数据与日志
 

@@ -212,16 +212,9 @@ Example:
 
 ```bash
 cat > .env <<'EOF'
-GEETEST_ID=your_geetest_id
-GEETEST_KEY=your_geetest_key
+GPS_ADMIN_BOOTSTRAP_TOKEN=change-me
 EOF
 ```
-
-Captcha behavior:
-
-- If both `GEETEST_ID` and `GEETEST_KEY` are unset, captcha is disabled
-- If both are set, captcha is enabled
-- If only one is set, login is rejected as a configuration error
 
 ### Data and Logs
 
