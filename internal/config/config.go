@@ -233,6 +233,51 @@ func GetDataDir() (string, error) {
 	return dataDir, nil
 }
 
+// ConfigDirForOS returns the user config directory for the application without creating it.
+func ConfigDirForOS(goos string) (string, error) {
+	switch goos {
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			return filepath.Join(appData, "go-proxy-server"), nil
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(homeDir, "go-proxy-server"), nil
+	case "darwin":
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(homeDir, "Library", "Application Support", "go-proxy-server"), nil
+	default:
+		if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
+			return filepath.Join(xdgConfigHome, "go-proxy-server"), nil
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(homeDir, ".config", "go-proxy-server"), nil
+	}
+}
+
+// GetConfigDir returns the user config directory for the application.
+func GetConfigDir() (string, error) {
+	configDir, err := ConfigDirForOS(runtime.GOOS)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", err
+	}
+
+	return configDir, nil
+}
+
 // GetDbPath returns the database file path
 func GetDbPath() (string, error) {
 	dataDir, err := GetDataDir()

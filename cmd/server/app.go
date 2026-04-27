@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +17,10 @@ import (
 	"github.com/apeming/go-proxy-server/internal/auth"
 	"github.com/apeming/go-proxy-server/internal/constants"
 	applogger "github.com/apeming/go-proxy-server/internal/logger"
+	runtimecfg "github.com/apeming/go-proxy-server/internal/runtime"
+	"github.com/apeming/go-proxy-server/internal/service"
 	"github.com/apeming/go-proxy-server/internal/tunnel"
+	"github.com/apeming/go-proxy-server/internal/web"
 )
 
 type commandHandler func(*App, []string) error
@@ -23,6 +29,11 @@ type commandSpec struct {
 	name  string
 	usage string
 	run   commandHandler
+}
+
+type parseResult struct {
+	handledHelp bool
+	err         error
 }
 
 type App struct {
@@ -38,6 +49,7 @@ var commandSpecs = []commandSpec{
 	{name: "addip", usage: "addip -ip <ip_to_add>", run: (*App).handleAddIPCommand},
 	{name: "delip", usage: "delip -ip <ip_to_delete>", run: (*App).handleDeleteIPCommand},
 	{name: "listip", usage: "listip", run: (*App).handleListIPCommand},
+	{name: "run", usage: "run [-config <path>] [-web-port <port>] [-socks-port <port>] [-socks-bind-listen] [-http-port <port>] [-http-bind-listen]", run: (*App).handleRunCommand},
 	{name: "socks", usage: "socks -port <port_number> [-bind-listen]", run: (*App).handleSocksCommand},
 	{name: "http", usage: "http -port <port_number> [-bind-listen]", run: (*App).handleHTTPCommand},
 	{name: "both", usage: "both -socks-port <port_number> -http-port <port_number> [-bind-listen]", run: (*App).handleBothCommand},
@@ -48,7 +60,40 @@ var commandSpecs = []commandSpec{
 	{name: "tunnel-list-routes", usage: "tunnel-list-routes", run: (*App).handleTunnelListRoutesCommand},
 	{name: "tunnel-save-route", usage: "tunnel-save-route -client <client_name> -name <route_name> -protocol <tcp|udp> -target <host:port> [-public-port <port_number>] [-enabled] [-ip-whitelist <ip_or_cidr,...>] [-udp-idle-timeout <sec>] [-udp-max-payload <bytes>]", run: (*App).handleTunnelSaveRouteCommand},
 	{name: "tunnel-del-route", usage: "tunnel-del-route -client <client_name> -name <route_name>", run: (*App).handleTunnelDeleteRouteCommand},
+	{name: "service", usage: "service install|uninstall|start|stop|status", run: (*App).handleServiceCommand},
 }
+
+var runConfigRuntimeFn = func(ctx context.Context, db *gorm.DB, cfg runtimecfg.Config) error {
+	manager := web.NewManager(db, cfg.Web.Port)
+	if err := manager.SyncAuthState(); err != nil {
+		return err
+	}
+	runner := runtimecfg.Runner{Manager: runtimecfg.NewWebManagerAdapter(manager)}
+	return runner.Start(ctx, cfg)
+}
+
+var installServiceFn = func(spec service.ServiceSpec) error {
+	return service.NewManager().Install(spec)
+}
+
+var uninstallServiceFn = func(name string) error {
+	return service.NewManager().Uninstall(name)
+}
+
+var startServiceFn = func(name string) error {
+	return service.NewManager().Start(name)
+}
+
+var stopServiceFn = func(name string) error {
+	return service.NewManager().Stop(name)
+}
+
+var serviceStatusFn = func(name string) (service.Status, error) {
+	return service.NewManager().Status(name)
+}
+
+var resolveServiceInstallConfigPathFn = resolveServiceInstallConfigPath
+var lookupUserFn = user.Lookup
 
 var commandRegistry = func() map[string]commandSpec {
 	registry := make(map[string]commandSpec, len(commandSpecs))
@@ -74,6 +119,10 @@ func NewApp(db *gorm.DB, stdout, stderr io.Writer) *App {
 
 func (a *App) Run(args []string) error {
 	if handleGlobalCLIArgs(args, a.stdout) {
+		return nil
+	}
+	if shouldWriteUsageForNoArgs(args) {
+		writeUsage(a.stdout)
 		return nil
 	}
 	if len(args) == 0 {
@@ -109,6 +158,79 @@ func (a *App) startDefaultMode() error {
 	return startWebModeFn(a.db, 0)
 }
 
+func shouldWriteUsageForNoArgs(args []string) bool {
+	return len(args) == 0 && currentGOOS() != "windows"
+}
+
+func newCommandFlagSet(name, usage string, stdout io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		writeCommandUsage(stdout, usage, fs)
+	}
+	return fs
+}
+
+func parseCommandFlags(fs *flag.FlagSet, args []string) parseResult {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.Usage()
+			return parseResult{handledHelp: true}
+		}
+		return parseResult{err: err}
+	}
+	return parseResult{}
+}
+
+func writeCommandUsage(w io.Writer, usage string, fs *flag.FlagSet) {
+	if w == nil {
+		w = io.Discard
+	}
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  go-proxy-server %s\n", usage)
+
+	if fs == nil {
+		return
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  -h, --help")
+
+	hasFlags := false
+	fs.VisitAll(func(f *flag.Flag) {
+		hasFlags = true
+	})
+	if !hasFlags {
+		return
+	}
+
+	previousOutput := fs.Output()
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+	fs.SetOutput(previousOutput)
+}
+
+func findCommandSpec(name string) (commandSpec, bool) {
+	spec, ok := commandRegistry[name]
+	return spec, ok
+}
+
+func writeServiceUsage(w io.Writer) {
+	if w == nil {
+		w = io.Discard
+	}
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  go-proxy-server service <install|uninstall|start|stop|status>")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Subcommands:")
+	fmt.Fprintln(w, "  go-proxy-server service install [-config <path>] [--name <service-name>]")
+	fmt.Fprintln(w, "  go-proxy-server service uninstall [--name <service-name>]")
+	fmt.Fprintln(w, "  go-proxy-server service start [--name <service-name>]")
+	fmt.Fprintln(w, "  go-proxy-server service stop [--name <service-name>]")
+	fmt.Fprintln(w, "  go-proxy-server service status [--name <service-name>]")
+}
+
 func (a *App) syncProxyRuntimeState() error {
 	if err := auth.SyncState(a.db); err != nil {
 		return fmt.Errorf("failed to load proxy auth state: %w", err)
@@ -118,11 +240,11 @@ func (a *App) syncProxyRuntimeState() error {
 }
 
 func (a *App) handleAddIPCommand(args []string) error {
-	fs := flag.NewFlagSet("addip", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("addip", "addip -ip <ip_to_add>", a.stdout)
 	ip := fs.String("ip", "", "Add an IP address to the whitelist")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *ip == "" {
 		return fmt.Errorf("usage: proxy-server addip -ip [ip]")
@@ -135,11 +257,11 @@ func (a *App) handleAddIPCommand(args []string) error {
 }
 
 func (a *App) handleDeleteIPCommand(args []string) error {
-	fs := flag.NewFlagSet("delip", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("delip", "delip -ip <ip_to_delete>", a.stdout)
 	ip := fs.String("ip", "", "Delete an IP address from the whitelist")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *ip == "" {
 		return fmt.Errorf("usage: proxy-server delip -ip [ip]")
@@ -152,10 +274,10 @@ func (a *App) handleDeleteIPCommand(args []string) error {
 }
 
 func (a *App) handleListIPCommand(args []string) error {
-	fs := flag.NewFlagSet("listip", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return err
+	fs := newCommandFlagSet("listip", "listip", a.stdout)
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if err := auth.SyncState(a.db); err != nil {
 		return err
@@ -164,13 +286,13 @@ func (a *App) handleListIPCommand(args []string) error {
 }
 
 func (a *App) handleAddUserCommand(args []string) error {
-	fs := flag.NewFlagSet("adduser", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("adduser", "adduser -username <username> -password <password>", a.stdout)
 	username := fs.String("username", "", "Username to add")
 	password := fs.String("password", "", "Password to add")
 	connectIP := fs.String("ip", "", "Connect ip")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *username == "" || *password == "" {
 		return fmt.Errorf("usage: proxy-server adduser -username [username] -password [password]")
@@ -183,11 +305,11 @@ func (a *App) handleAddUserCommand(args []string) error {
 }
 
 func (a *App) handleDeleteUserCommand(args []string) error {
-	fs := flag.NewFlagSet("deluser", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("deluser", "deluser -username <username>", a.stdout)
 	username := fs.String("username", "", "Username to delete")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *username == "" {
 		return fmt.Errorf("usage: proxy-server deluser -username [username]")
@@ -200,21 +322,71 @@ func (a *App) handleDeleteUserCommand(args []string) error {
 }
 
 func (a *App) handleListUserCommand(args []string) error {
-	fs := flag.NewFlagSet("listuser", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return err
+	fs := newCommandFlagSet("listuser", "listuser", a.stdout)
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	return auth.ListUsersToWriter(a.db, a.stdout)
 }
 
+func (a *App) handleRunCommand(args []string) error {
+	fs := newCommandFlagSet("run", "run [-config <path>] [-web-port <port>] [-socks-port <port>] [-socks-bind-listen] [-http-port <port>] [-http-bind-listen]", a.stdout)
+	configPath := fs.String("config", "", "Path to TOML runtime config")
+	webPort := fs.Int("web-port", 0, "Override web port")
+	socksPort := fs.Int("socks-port", 0, "Override SOCKS port")
+	socksBind := fs.Bool("socks-bind-listen", false, "Override SOCKS bind-listen")
+	httpPort := fs.Int("http-port", 0, "Override HTTP port")
+	httpBind := fs.Bool("http-bind-listen", false, "Override HTTP bind-listen")
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
+	}
+
+	cfgPath := *configPath
+	if strings.TrimSpace(cfgPath) == "" {
+		var err error
+		cfgPath, err = runtimecfg.DefaultConfigPath()
+		if err != nil {
+			return err
+		}
+	}
+
+	cfg, err := runtimecfg.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg = cfg.ApplyOverrides(runtimecfg.Overrides{
+		WebPort:         optionalIntFlag(fs, "web-port", *webPort),
+		SocksPort:       optionalIntFlag(fs, "socks-port", *socksPort),
+		SocksBindListen: optionalBoolFlag(fs, "socks-bind-listen", *socksBind),
+		HTTPPort:        optionalIntFlag(fs, "http-port", *httpPort),
+		HTTPBindListen:  optionalBoolFlag(fs, "http-bind-listen", *httpBind),
+	})
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	restoreShutdownHandler := setShutdownSignalHandler(cancel)
+	defer func() {
+		restoreShutdownHandler()
+		cancel()
+	}()
+
+	err = runConfigRuntimeFn(ctx, a.db, cfg)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
 func (a *App) handleSocksCommand(args []string) error {
-	fs := flag.NewFlagSet("socks", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("socks", "socks -port <port_number> [-bind-listen]", a.stdout)
 	port := fs.Int("port", 1080, "The port number for the SOCKS5 proxy server")
 	bindListen := fs.Bool("bind-listen", false, "use connect ip as output ip")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
@@ -223,12 +395,12 @@ func (a *App) handleSocksCommand(args []string) error {
 }
 
 func (a *App) handleHTTPCommand(args []string) error {
-	fs := flag.NewFlagSet("http", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("http", "http -port <port_number> [-bind-listen]", a.stdout)
 	port := fs.Int("port", 8080, "The port number for the HTTP proxy server")
 	bindListen := fs.Bool("bind-listen", false, "use connect ip as output ip")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
@@ -237,13 +409,13 @@ func (a *App) handleHTTPCommand(args []string) error {
 }
 
 func (a *App) handleBothCommand(args []string) error {
-	fs := flag.NewFlagSet("both", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("both", "both -socks-port <port_number> -http-port <port_number> [-bind-listen]", a.stdout)
 	socksPort := fs.Int("socks-port", 1080, "The port number for the SOCKS5 proxy server")
 	httpPort := fs.Int("http-port", 8080, "The port number for the HTTP proxy server")
 	bindListen := fs.Bool("bind-listen", false, "use connect ip as output ip")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
@@ -265,18 +437,17 @@ func (a *App) handleBothCommand(args []string) error {
 }
 
 func (a *App) handleWebCommand(args []string) error {
-	fs := flag.NewFlagSet("web", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("web", "web [-port <port_number>]  (default: random port)", a.stdout)
 	port := fs.Int("port", 0, "The port number for the web management interface (0 for random port)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	return startWebMode(a.db, *port)
 }
 
 func (a *App) handleTunnelServerCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-server", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("tunnel-server", "tunnel-server -engine <classic|quic> -listen <host:port> -token <token> (-cert <cert.pem> -key <key.pem> | -allow-insecure) [-public-bind <host>] [-auto-port-start <port> -auto-port-end <port>]", a.stdout)
 	engine := fs.String("engine", tunnel.EngineClassic, "Tunnel engine: classic or quic")
 	listenAddr := fs.String("listen", ":7000", "The control listener address for tunnel clients")
 	publicBind := fs.String("public-bind", "0.0.0.0", "The bind address used for exposed public ports")
@@ -286,8 +457,9 @@ func (a *App) handleTunnelServerCommand(args []string) error {
 	certFile := fs.String("cert", "", "TLS certificate path for the tunnel server")
 	keyFile := fs.String("key", "", "TLS private key path for the tunnel server")
 	allowInsecure := fs.Bool("allow-insecure", false, "Allow plaintext tunnel traffic (unsafe, testing only)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *engine != tunnel.EngineClassic && *engine != tunnel.EngineQUIC {
 		return fmt.Errorf("unsupported tunnel engine: %s", *engine)
@@ -331,8 +503,7 @@ func (a *App) handleTunnelServerCommand(args []string) error {
 }
 
 func (a *App) handleTunnelClientCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-client", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("tunnel-client", "tunnel-client -engine <classic|quic> -server <host:port> -token <token> -client <client_name> (-ca <ca.pem> | -insecure-skip-verify | -allow-insecure) [-server-name <name>]", a.stdout)
 	engine := fs.String("engine", tunnel.EngineClassic, "Tunnel engine: classic or quic")
 	serverAddr := fs.String("server", "", "The public tunnel server address")
 	token := fs.String("token", "", "Shared secret for tunnel server")
@@ -341,8 +512,9 @@ func (a *App) handleTunnelClientCommand(args []string) error {
 	serverName := fs.String("server-name", "", "Expected TLS server name")
 	insecureSkipVerify := fs.Bool("insecure-skip-verify", false, "Skip TLS certificate verification (unsafe)")
 	allowInsecure := fs.Bool("allow-insecure", false, "Allow plaintext tunnel traffic (unsafe, testing only)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 	if *engine != tunnel.EngineClassic && *engine != tunnel.EngineQUIC {
 		return fmt.Errorf("unsupported tunnel engine: %s", *engine)
@@ -376,10 +548,10 @@ func (a *App) handleTunnelClientCommand(args []string) error {
 }
 
 func (a *App) handleTunnelListClientsCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-list-clients", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return err
+	fs := newCommandFlagSet("tunnel-list-clients", "tunnel-list-clients", a.stdout)
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 
 	store := tunnel.NewManagedStore(a.db)
@@ -403,10 +575,10 @@ func (a *App) handleTunnelListClientsCommand(args []string) error {
 }
 
 func (a *App) handleTunnelListRoutesCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-list-routes", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return err
+	fs := newCommandFlagSet("tunnel-list-routes", "tunnel-list-routes", a.stdout)
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 
 	store := tunnel.NewManagedStore(a.db)
@@ -431,8 +603,7 @@ func (a *App) handleTunnelListRoutesCommand(args []string) error {
 }
 
 func (a *App) handleTunnelSaveRouteCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-save-route", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("tunnel-save-route", "tunnel-save-route -client <client_name> -name <route_name> -protocol <tcp|udp> -target <host:port> [-public-port <port_number>] [-enabled] [-ip-whitelist <ip_or_cidr,...>] [-udp-idle-timeout <sec>] [-udp-max-payload <bytes>]", a.stdout)
 	clientName := fs.String("client", "", "Tunnel client name")
 	routeName := fs.String("name", "", "Tunnel route name")
 	protocol := fs.String("protocol", tunnel.ProtocolTCP, "Tunnel protocol: tcp or udp")
@@ -442,8 +613,9 @@ func (a *App) handleTunnelSaveRouteCommand(args []string) error {
 	udpIdleTimeout := fs.Int("udp-idle-timeout", tunnel.DefaultManagedUDPIdleTimeoutSec, "UDP idle session timeout in seconds")
 	udpMaxPayload := fs.Int("udp-max-payload", tunnel.DefaultManagedUDPMaxPayload, "Maximum UDP payload size in bytes")
 	enabled := fs.Bool("enabled", true, "Whether the route is enabled")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 
 	store := tunnel.NewManagedStore(a.db)
@@ -455,12 +627,12 @@ func (a *App) handleTunnelSaveRouteCommand(args []string) error {
 }
 
 func (a *App) handleTunnelDeleteRouteCommand(args []string) error {
-	fs := flag.NewFlagSet("tunnel-del-route", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newCommandFlagSet("tunnel-del-route", "tunnel-del-route -client <client_name> -name <route_name>", a.stdout)
 	clientName := fs.String("client", "", "Tunnel client name")
 	routeName := fs.String("name", "", "Tunnel route name")
-	if err := fs.Parse(args); err != nil {
-		return err
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return result.err
 	}
 
 	store := tunnel.NewManagedStore(a.db)
@@ -503,4 +675,198 @@ func parseCSVFlag(value string) []string {
 		}
 	}
 	return values
+}
+
+func optionalInt(value int) *int {
+	if value == 0 {
+		return nil
+	}
+	v := value
+	return &v
+}
+
+func optionalIntFlag(fs *flag.FlagSet, name string, value int) *int {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	if !set {
+		return nil
+	}
+	v := value
+	return &v
+}
+
+func optionalBoolFlag(fs *flag.FlagSet, name string, value bool) *bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	if !set {
+		return nil
+	}
+	v := value
+	return &v
+}
+
+func (a *App) handleServiceCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-proxy-server service <install|uninstall|start|stop|status>")
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		writeServiceUsage(a.stdout)
+		return nil
+	}
+
+	switch args[0] {
+	case "install":
+		fs := newCommandFlagSet("service install", "service install [-config <path>] [--name <service-name>]", a.stdout)
+		configPath := fs.String("config", "", "Runtime config path")
+		name := fs.String("name", service.DefaultServiceName, "Service name")
+		result := parseCommandFlags(fs, args[1:])
+		if result.handledHelp || result.err != nil {
+			return result.err
+		}
+		execPath, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		workDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if err := service.ValidateName(*name); err != nil {
+			return err
+		}
+		effectiveConfigPath := strings.TrimSpace(*configPath)
+		if effectiveConfigPath == "" && currentGOOS() == "linux" {
+			effectiveConfigPath, err = resolveServiceInstallConfigPathFn(currentGOOS())
+			if err != nil {
+				return err
+			}
+		}
+		spec := service.BuildRunSpec(execPath, workDir, effectiveConfigPath)
+		spec.Name = *name
+		return installServiceFn(spec)
+	case "uninstall":
+		name, handledHelp, err := parseServiceName(args[1:], "service uninstall [--name <service-name>]", a.stdout)
+		if err != nil {
+			return err
+		}
+		if handledHelp {
+			return nil
+		}
+		return uninstallServiceFn(name)
+	case "start":
+		name, handledHelp, err := parseServiceName(args[1:], "service start [--name <service-name>]", a.stdout)
+		if err != nil {
+			return err
+		}
+		if handledHelp {
+			return nil
+		}
+		return startServiceFn(name)
+	case "stop":
+		name, handledHelp, err := parseServiceName(args[1:], "service stop [--name <service-name>]", a.stdout)
+		if err != nil {
+			return err
+		}
+		if handledHelp {
+			return nil
+		}
+		return stopServiceFn(name)
+	case "status":
+		name, handledHelp, err := parseServiceName(args[1:], "service status [--name <service-name>]", a.stdout)
+		if err != nil {
+			return err
+		}
+		if handledHelp {
+			return nil
+		}
+		status, err := serviceStatusFn(name)
+		if err != nil {
+			return err
+		}
+		if detail := compactStatusDetail(status.Detail); detail != "" {
+			fmt.Fprintf(a.stdout, "%s\tstate=%s\tenabled=%t\trunning=%t\tdetail=%s\n", status.Name, status.State, status.Enabled, status.Running, detail)
+			return nil
+		}
+		fmt.Fprintf(a.stdout, "%s\tstate=%s\tenabled=%t\trunning=%t\n", status.Name, status.State, status.Enabled, status.Running)
+		return nil
+	default:
+		return fmt.Errorf("unknown service subcommand: %s", args[0])
+	}
+}
+
+func parseServiceName(args []string, usage string, stdout io.Writer) (string, bool, error) {
+	fs := newCommandFlagSet("service name", usage, stdout)
+	name := fs.String("name", service.DefaultServiceName, "Service name")
+	result := parseCommandFlags(fs, args)
+	if result.handledHelp || result.err != nil {
+		return "", result.handledHelp, result.err
+	}
+	if err := service.ValidateName(*name); err != nil {
+		return "", false, err
+	}
+	return *name, false, nil
+}
+
+func compactStatusDetail(detail string) string {
+	lines := strings.Split(detail, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+		if len(parts) == 3 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) < len(nonEmptyStatusLines(lines)) {
+		parts = append(parts, "...")
+	}
+	return strings.Join(parts, " | ")
+}
+
+func nonEmptyStatusLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func resolveServiceInstallConfigPath(goos string) (string, error) {
+	if goos != "linux" {
+		return "", nil
+	}
+
+	if xdgConfigHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdgConfigHome != "" {
+		return filepath.Join(xdgConfigHome, "go-proxy-server", "config.toml"), nil
+	}
+
+	sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER"))
+	if sudoUser == "" || sudoUser == "root" {
+		return runtimecfg.DefaultConfigPath()
+	}
+
+	account, err := lookupUserFn(sudoUser)
+	if err != nil {
+		return "", fmt.Errorf("resolve sudo user %q: %w", sudoUser, err)
+	}
+	if strings.TrimSpace(account.HomeDir) == "" {
+		return "", fmt.Errorf("resolve sudo user %q home directory: empty", sudoUser)
+	}
+	return filepath.Join(account.HomeDir, ".config", "go-proxy-server", "config.toml"), nil
 }

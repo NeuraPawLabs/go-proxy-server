@@ -6,10 +6,10 @@ This page covers the essential Windows workflow for Go Proxy Server.
 
 ## Daily Usage
 
-For normal use, start the GUI / tray build:
+For normal use, start the Windows build directly:
 
 ```powershell
-bin\go-proxy-server-gui.exe
+bin\go-proxy-server.exe
 ```
 
 Notes:
@@ -17,12 +17,6 @@ Notes:
 - the Web admin UI listens on `localhost` only
 - the management port is chosen automatically unless specified manually
 - you can open the admin UI from the tray menu
-
-For debugging, use the console build:
-
-```powershell
-bin\go-proxy-server.exe
-```
 
 ## Logs and Data Directory
 
@@ -37,7 +31,6 @@ Common files:
 - `app.log`: log file used by tray / GUI mode
 
 Notes:
-- console mode logs to the terminal by default
 - the actual Web admin URL is shown in startup logs or tray hints
 
 ## Common Issues
@@ -54,10 +47,10 @@ go-proxy-server.exe web -port 8888
 
 ### Application exits immediately
 
-Run the console build first and inspect the error output:
+Check `app.log` in the app data directory first:
 
 ```powershell
-go-proxy-server.exe
+Get-Content "$env:APPDATA\go-proxy-server\app.log" -Tail 200
 ```
 
 ## Build
@@ -66,12 +59,11 @@ Recommended commands:
 
 ```bash
 make build-windows
-make build-windows-gui
 ```
 
 Notes:
-- `build-windows` creates the console build
-- `build-windows-gui` creates the tray / GUI build
+- `build-windows` creates the tray / GUI build
+- `build-windows-gui` is kept as an alias to `build-windows`
 - Windows resource metadata is embedded through the repository build scripts
 
 ## Antivirus and Signing

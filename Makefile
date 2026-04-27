@@ -76,19 +76,16 @@ build-resources:
 	@echo "Building Windows resources..."
 	@bash $(RESOURCE_SCRIPT) || (echo ""; echo "ERROR: Failed to build Windows resources."; echo "See scripts/README.md for installation instructions."; echo ""; exit 1)
 
-# Build for Windows (console mode)
+# Build for Windows (GUI / tray mode)
 build-windows: frontend-build build-resources
-	@echo "Building for Windows (console mode)..."
+	@echo "Building for Windows (GUI / tray mode)..."
 	@mkdir -p $(OUTPUT_DIR)
-	GOOS=windows GOARCH=amd64 go build -tags "$(GO_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME).exe $(MAIN_PATH)
+	GOOS=windows GOARCH=amd64 go build -tags "$(GO_BUILD_TAGS)" -ldflags "$(WINDOWS_GUI_LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME).exe $(MAIN_PATH)
 	@echo "Build complete: $(OUTPUT_DIR)/$(BINARY_NAME).exe"
 
-# Build for Windows (GUI mode - no console window)
-build-windows-gui: frontend-build build-resources
-	@echo "Building for Windows (GUI mode - system tray)..."
-	@mkdir -p $(OUTPUT_DIR)
-	GOOS=windows GOARCH=amd64 go build -tags "$(GO_BUILD_TAGS)" -ldflags "$(WINDOWS_GUI_LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME)-gui.exe $(MAIN_PATH)
-	@echo "Build complete: $(OUTPUT_DIR)/$(BINARY_NAME)-gui.exe"
+# Legacy alias for Windows GUI build
+build-windows-gui: build-windows
+	@echo "Alias complete: $(OUTPUT_DIR)/$(BINARY_NAME).exe"
 
 # Build for macOS
 build-darwin: frontend-build
@@ -98,7 +95,7 @@ build-darwin: frontend-build
 	@echo "Build complete: $(OUTPUT_DIR)/$(BINARY_NAME)-darwin-amd64"
 
 # Build for all platforms
-build-all: build-linux build-windows build-windows-gui build-darwin
+build-all: build-linux build-windows build-darwin
 	@echo "All builds complete!"
 
 # Build benchmark tool for current platform
@@ -182,8 +179,8 @@ help:
 	@echo "Available targets:"
 	@echo "  make build              - Build for current platform (includes frontend)"
 	@echo "  make build-linux        - Build for Linux (includes frontend)"
-	@echo "  make build-windows      - Build for Windows console mode (includes frontend)"
-	@echo "  make build-windows-gui  - Build for Windows GUI/tray mode (includes frontend)"
+	@echo "  make build-windows      - Build for Windows GUI/tray mode (includes frontend)"
+	@echo "  make build-windows-gui  - Alias for build-windows"
 	@echo "  make build-darwin       - Build for macOS (includes frontend)"
 	@echo "  make build-resources    - Build Windows resource file (.syso)"
 	@echo "  make build-all          - Build for all platforms (includes frontend)"

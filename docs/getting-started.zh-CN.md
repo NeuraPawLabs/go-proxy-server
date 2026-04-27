@@ -23,7 +23,7 @@ make build
 - Linux / macOS 会直接启动本地 Web 管理后台
 - Windows 优先进入系统托盘模式，失败后回退到本地 Web 管理后台
 - 之前保存且启用了 `AutoStart` 的代理服务可能会自动恢复
-- 不会自动启动内网穿透服务端或客户端进程
+- 之前保存且启用了 `AutoStart` 的内网穿透服务端或客户端配置也可能会自动恢复
 
 ### Web 管理模式
 
@@ -52,6 +52,102 @@ make build
 ```bash
 ./bin/go-proxy-server both -socks-port 1080 -http-port 8080
 ```
+
+## 配置驱动运行
+
+使用 `go-proxy-server run` 可以从 TOML 配置启动一个受管进程。
+
+```bash
+./bin/go-proxy-server run
+./bin/go-proxy-server run -config /etc/go-proxy-server/config.toml
+./bin/go-proxy-server run -web-port 8081 -socks-port 1081
+```
+
+如果省略 `-config`，`run` 会使用平台默认的运行配置路径：
+
+- Linux：`$XDG_CONFIG_HOME/go-proxy-server/config.toml` 或 `~/.config/go-proxy-server/config.toml`
+- macOS：`~/Library/Application Support/go-proxy-server/config.toml`
+- Windows：`%APPDATA%\go-proxy-server\config.toml` 或 `~/go-proxy-server/config.toml`
+
+命令行参数会覆盖 TOML 中的值，因此可以保留共享配置文件，同时在启动时做一次性覆盖。
+
+使用 `run` 前，请先把下面的示例保存到该默认路径，或者通过 `-config` 显式指定配置文件。
+
+示例 `config.toml`：
+
+```toml
+[web]
+enabled = true
+port = 8080
+
+[socks]
+enabled = true
+port = 1080
+bind_listen = false
+
+[http]
+enabled = false
+port = 8081
+bind_listen = false
+
+[tunnel_server]
+enabled = false
+engine = "classic"
+listen = ":7000"
+public_bind = "0.0.0.0"
+token = ""
+cert = ""
+key = ""
+allow_insecure = false
+auto_port_start = 0
+auto_port_end = 0
+
+[tunnel_client]
+enabled = false
+engine = "classic"
+server = ""
+token = ""
+client = ""
+ca = ""
+server_name = ""
+insecure_skip_verify = false
+allow_insecure = false
+```
+
+- TOML 中的 tunnel TLS 规则：
+  `[tunnel_server]` 要么提供 `cert` 和 `key`，要么设置 `allow_insecure = true`
+  `[tunnel_client]` 必须在 `ca`、`insecure_skip_verify = true`、`allow_insecure = true` 三者中选择一种
+  `allow_insecure = true` 不能和 `cert`/`key`、`ca`、`server_name`、`insecure_skip_verify` 同时使用
+  `insecure_skip_verify = true` 仍然走 TLS，只是跳过证书校验，因此不要求 `ca`
+  服务端 `allow_insecure = true` 时，即使磁盘上已经存在托管证书文件，也仍然可以启动
+
+这种方式保留了直接使用 `socks`、`http`、`both` 命令的能力，同时把单进程启动改成配置驱动。
+
+## 服务工作流
+
+`service install` 始终会把 `go-proxy-server run` 作为受管服务命令安装进去。
+
+Linux 会安装系统级 `systemd` 服务：
+
+```bash
+sudo ./bin/go-proxy-server service install
+sudo ./bin/go-proxy-server service install -config /etc/go-proxy-server/config.toml
+sudo ./bin/go-proxy-server service status
+```
+
+- Linux 下如果 `service install` 省略 `-config`，安装出的 unit 会按以下顺序解析运行配置：
+  优先使用保留下来的 `$XDG_CONFIG_HOME/go-proxy-server/config.toml`
+  否则回退到 `SUDO_USER` 对应用户的 `~/.config/go-proxy-server/config.toml`
+- 如果要做稳定的系统部署，建议显式传 `-config /etc/go-proxy-server/config.toml`。
+
+macOS 会安装当前用户级别的 `launchd` LaunchAgent：
+
+```bash
+./bin/go-proxy-server service install
+./bin/go-proxy-server service status
+```
+
+- macOS 下省略 `-config` 时，LaunchAgent 会在运行时读取当前用户的默认配置路径。
 
 ## 用户与白名单管理
 

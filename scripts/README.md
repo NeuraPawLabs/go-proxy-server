@@ -38,8 +38,8 @@ brew install mingw-w64
 
 ```bash
 # 自动编译资源并构建
-make build-windows      # 控制台版本
-make build-windows-gui  # 系统托盘版本
+make build-windows      # Windows 托盘 / GUI 版本
+make build-windows-gui  # build-windows 的别名
 ```
 
 资源文件会自动编译并嵌入到exe中。

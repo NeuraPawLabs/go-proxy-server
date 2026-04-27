@@ -39,12 +39,22 @@ Go Proxy Server 是一个使用 Go 编写的自托管服务，单个二进制同
 - `quic` 引擎支持 TCP 与 UDP
 - 支持在指定端口范围内自动分配公网端口
 
+### 配置驱动运行
+
+- `go-proxy-server run` 会从 TOML 配置启动一个受管进程。
+- 如果省略 `-config`，`run` 会读取当前平台的默认运行配置路径。
+  Linux：`$XDG_CONFIG_HOME/go-proxy-server/config.toml` 或 `~/.config/go-proxy-server/config.toml`
+  macOS：`~/Library/Application Support/go-proxy-server/config.toml`
+  Windows：`%APPDATA%\go-proxy-server\config.toml` 或 `~/go-proxy-server/config.toml`
+- 命令行参数会覆盖 TOML 中的值，因此临时覆盖仍然优先。
+- `go-proxy-server service install` 会把 `go-proxy-server run` 作为系统服务入口安装。
+
 ### 平台行为
 
 - Linux / macOS：无参数启动时进入本地 Web 管理模式
 - Windows：无参数启动时优先尝试系统托盘模式
 - 无参数启动会恢复已保存且启用了 `AutoStart` 的代理服务
-- 无参数启动不会自动启动 `tunnel-server` 或 `tunnel-client`
+- 无参数启动也可能恢复已保存且启用了 `AutoStart` 的 `tunnel-server` 与 `tunnel-client` 配置
 
 ## 运行模式总览
 
@@ -102,6 +112,97 @@ make build
 - 这些 CLI 模式都会以前台运行，停止时直接 `Ctrl+C`。
 - 这些模式只使用当前命令行参数，不会恢复 Web 后台保存的代理端口配置。
 - 但它们仍会加载 SQLite 中的用户和白名单状态。
+
+### 配置驱动运行
+
+```bash
+./bin/go-proxy-server run
+./bin/go-proxy-server run -config /etc/go-proxy-server/config.toml
+./bin/go-proxy-server run -web-port 8081 -socks-port 1081
+```
+
+使用 `run` 前，请先把下面的示例保存到当前平台默认配置路径，或者通过 `-config` 明确指定配置文件路径。
+
+示例 `config.toml`：
+
+```toml
+[web]
+enabled = true
+port = 8080
+
+[socks]
+enabled = true
+port = 1080
+bind_listen = false
+
+[http]
+enabled = false
+port = 8081
+bind_listen = false
+
+[tunnel_server]
+enabled = false
+engine = "classic"
+listen = ":7000"
+public_bind = "0.0.0.0"
+token = ""
+cert = ""
+key = ""
+allow_insecure = false
+auto_port_start = 0
+auto_port_end = 0
+
+[tunnel_client]
+enabled = false
+engine = "classic"
+server = ""
+token = ""
+client = ""
+ca = ""
+server_name = ""
+insecure_skip_verify = false
+allow_insecure = false
+```
+
+- `-config` 省略时，`run` 会读取平台默认的运行配置路径。
+  Linux：`$XDG_CONFIG_HOME/go-proxy-server/config.toml` 或 `~/.config/go-proxy-server/config.toml`
+  macOS：`~/Library/Application Support/go-proxy-server/config.toml`
+  Windows：`%APPDATA%\go-proxy-server\config.toml` 或 `~/go-proxy-server/config.toml`
+- `run` 先读取 TOML，再把命令行覆盖项应用到配置之上。
+- 即使只想通过命令行临时覆盖端口，`run` 也仍然要求对应的 TOML 配置文件已经存在。
+- TOML 中的 tunnel TLS 规则：
+  `[tunnel_server]` 要么提供 `cert` 和 `key`，要么设置 `allow_insecure = true`
+  `[tunnel_client]` 必须在 `ca`、`insecure_skip_verify = true`、`allow_insecure = true` 三者中选择一种
+  `allow_insecure = true` 不能和 `cert`/`key`、`ca`、`server_name`、`insecure_skip_verify` 同时使用
+  `insecure_skip_verify = true` 仍然走 TLS，只是跳过证书校验，因此不要求 `ca`
+  服务端配置 `allow_insecure = true` 时，即使磁盘上已经存在托管证书文件，也不需要先删除
+- 这样可以在不改变 `socks`、`http` 或 `both` 直接命令的前提下，使用单进程方式启动。
+
+### Linux 和 macOS 服务安装
+
+`service install` 始终会安装 `go-proxy-server run` 作为受管服务命令。
+
+Linux 使用系统级 `systemd` 服务：
+
+```bash
+sudo ./bin/go-proxy-server service install
+sudo ./bin/go-proxy-server service install -config /etc/go-proxy-server/config.toml
+sudo ./bin/go-proxy-server service status
+```
+
+- Linux 下如果 `service install` 省略 `-config`，安装出的 unit 会按以下顺序解析运行配置：
+  优先使用保留下来的 `$XDG_CONFIG_HOME/go-proxy-server/config.toml`
+  否则回退到 `SUDO_USER` 对应用户的 `~/.config/go-proxy-server/config.toml`
+- 如果要做稳定的系统部署，建议显式传 `-config /etc/go-proxy-server/config.toml`。
+
+macOS 使用当前用户级别的 `launchd` LaunchAgent：
+
+```bash
+./bin/go-proxy-server service install
+./bin/go-proxy-server service status
+```
+
+- macOS 下省略 `-config` 时，LaunchAgent 会在运行时读取当前用户的默认配置路径。
 
 ### 添加用户并启动 SOCKS5
 

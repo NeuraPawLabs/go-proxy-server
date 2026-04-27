@@ -3,6 +3,7 @@ module github.com/apeming/go-proxy-server
 go 1.24.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/getlantern/systray v1.2.2
 	github.com/glebarez/sqlite v1.10.0
 	github.com/go-ole/go-ole v1.3.0

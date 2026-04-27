@@ -58,12 +58,16 @@ func TestBootstrapLogLevelForCLIArgs(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
+		goos string
 		want int32
 	}{
-		{name: "default mode keeps service logs", args: nil, want: int32(1)},
+		{name: "linux no args is quiet", args: nil, goos: "linux", want: int32(4)},
+		{name: "windows no args keeps service logs", args: nil, goos: "windows", want: int32(1)},
+		{name: "run keeps service logs", args: []string{"run"}, want: int32(1)},
 		{name: "web keeps service logs", args: []string{"web"}, want: int32(1)},
 		{name: "socks keeps service logs", args: []string{"socks"}, want: int32(1)},
 		{name: "tunnel server keeps service logs", args: []string{"tunnel-server"}, want: int32(1)},
+		{name: "service is quiet", args: []string{"service"}, want: int32(4)},
 		{name: "listuser is quiet", args: []string{"listuser"}, want: int32(4)},
 		{name: "adduser is quiet", args: []string{"adduser"}, want: int32(4)},
 		{name: "listip is quiet", args: []string{"listip"}, want: int32(4)},
@@ -72,12 +76,84 @@ func TestBootstrapLogLevelForCLIArgs(t *testing.T) {
 		{name: "unknown command is quiet", args: []string{"wat"}, want: int32(4)},
 	}
 
+	origGOOS := currentGOOS
+	defer func() {
+		currentGOOS = origGOOS
+	}()
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			goos := tt.goos
+			if goos == "" {
+				goos = "linux"
+			}
+			currentGOOS = func() string { return goos }
 			if got := int32(bootstrapLogLevel(tt.args)); got != tt.want {
 				t.Fatalf("bootstrapLogLevel(%v) = %d, want %d", tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewBootstrapHandlesNoArgsWithoutInitializationOnNonWindows(t *testing.T) {
+	origEnsure := ensureSingleInstanceFn
+	origLoadDotEnv := loadDotEnvFn
+	origLoadConfig := loadConfigFn
+	origInitLogger := initLoggerFn
+	origSetupCleanup := setupCleanupHandlerFn
+	origInitDB := initializeDatabaseFn
+	origArgs := currentArgsFn
+	origGOOS := currentGOOS
+	defer func() {
+		ensureSingleInstanceFn = origEnsure
+		loadDotEnvFn = origLoadDotEnv
+		loadConfigFn = origLoadConfig
+		initLoggerFn = origInitLogger
+		setupCleanupHandlerFn = origSetupCleanup
+		initializeDatabaseFn = origInitDB
+		currentArgsFn = origArgs
+		currentGOOS = origGOOS
+	}()
+
+	currentGOOS = func() string { return "linux" }
+	ensureSingleInstanceFn = func(stdout, stderr io.Writer) (func(), bool) {
+		t.Fatal("ensureSingleInstance should not run for no-arg CLI help")
+		return nil, false
+	}
+	loadDotEnvFn = func() error {
+		t.Fatal("loadDotEnv should not run for no-arg CLI help")
+		return nil
+	}
+	loadConfigFn = func() error {
+		t.Fatal("loadConfig should not run for no-arg CLI help")
+		return nil
+	}
+	initLoggerFn = func() error {
+		t.Fatal("initLogger should not run for no-arg CLI help")
+		return nil
+	}
+	setupCleanupHandlerFn = func() {
+		t.Fatal("setupCleanupHandler should not run for no-arg CLI help")
+	}
+	initializeDatabaseFn = func() (*gorm.DB, error) {
+		t.Fatal("initializeDatabase should not run for no-arg CLI help")
+		return nil, nil
+	}
+	currentArgsFn = func() []string { return []string{"server"} }
+
+	var stdout bytes.Buffer
+	bootstrap, handled, err := NewBootstrap(&stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("NewBootstrap: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected no-arg CLI help to be handled during bootstrap")
+	}
+	if bootstrap != nil {
+		t.Fatal("expected no bootstrap when no-arg CLI help is handled")
+	}
+	if !strings.Contains(stdout.String(), "Usage:\n") {
+		t.Fatalf("expected usage output, got %q", stdout.String())
 	}
 }
 

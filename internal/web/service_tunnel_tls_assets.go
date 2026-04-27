@@ -181,6 +181,12 @@ func (wm *Manager) resolveTunnelServerTLSFiles(cfg tunnelServerConfig) (string, 
 	if err != nil {
 		return "", "", err
 	}
+	if cfg.AllowInsecure {
+		if cfg.CertFile != "" || cfg.KeyFile != "" {
+			return "", "", fmt.Errorf("cannot combine -allow-insecure with -cert/-key")
+		}
+		return "", "", nil
+	}
 	if state.Managed {
 		if !state.Ready {
 			return "", "", fmt.Errorf("tunnel TLS materials are incomplete, please upload or generate certificate files first")
@@ -205,7 +211,7 @@ func (wm *Manager) loadManagedTunnelServerTLSConfig(cfg tunnelServerConfig) (*tl
 	if err != nil {
 		return nil, err
 	}
-	return tunnel.LoadServerTLSConfig(certPath, keyPath, false)
+	return tunnel.LoadServerTLSConfig(certPath, keyPath, cfg.AllowInsecure)
 }
 
 func (wm *Manager) storeManagedTunnelServerCertificates(upload tunnelServerCertificateUpload, source string) error {

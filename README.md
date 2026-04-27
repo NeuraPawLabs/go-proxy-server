@@ -39,12 +39,22 @@ Go Proxy Server is a self-hosted Go service that combines local proxy access, a 
 - `quic` engine for TCP and UDP
 - Auto-assigned public ports within a configured port range
 
+### Configuration-Driven Runtime
+
+- `go-proxy-server run` starts one managed process from TOML configuration.
+- If `-config` is omitted, `run` loads the default runtime config path for the current platform.
+  Linux: `$XDG_CONFIG_HOME/go-proxy-server/config.toml` or `~/.config/go-proxy-server/config.toml`
+  macOS: `~/Library/Application Support/go-proxy-server/config.toml`
+  Windows: `%APPDATA%\go-proxy-server\config.toml` or `~/go-proxy-server/config.toml`
+- CLI flags override TOML values, so ad hoc overrides still take priority.
+- `go-proxy-server service install` installs `go-proxy-server run` as the OS service entry point.
+
 ### Platform Behavior
 
 - Linux/macOS: no-argument startup launches the local Web admin UI
 - Windows: no-argument startup prefers tray mode, then falls back to Web mode
 - No-argument startup restores saved proxy services marked with `AutoStart`
-- No-argument startup does not auto-start `tunnel-server` or `tunnel-client`
+- No-argument startup may also restore saved `tunnel-server` and `tunnel-client` configs marked with `AutoStart`
 
 ## Runtime Modes
 
@@ -102,6 +112,97 @@ make build
 - These CLI modes run in the foreground until `Ctrl+C`.
 - These modes use current CLI flags only. They do not restore saved proxy ports from the Web UI.
 - They still load users and allowlist state from SQLite.
+
+### Configuration-Driven Runtime
+
+```bash
+./bin/go-proxy-server run
+./bin/go-proxy-server run -config /etc/go-proxy-server/config.toml
+./bin/go-proxy-server run -web-port 8081 -socks-port 1081
+```
+
+Save this sample to the default config path for your platform, or pass its path with `-config` before using `run`.
+
+Example `config.toml`:
+
+```toml
+[web]
+enabled = true
+port = 8080
+
+[socks]
+enabled = true
+port = 1080
+bind_listen = false
+
+[http]
+enabled = false
+port = 8081
+bind_listen = false
+
+[tunnel_server]
+enabled = false
+engine = "classic"
+listen = ":7000"
+public_bind = "0.0.0.0"
+token = ""
+cert = ""
+key = ""
+allow_insecure = false
+auto_port_start = 0
+auto_port_end = 0
+
+[tunnel_client]
+enabled = false
+engine = "classic"
+server = ""
+token = ""
+client = ""
+ca = ""
+server_name = ""
+insecure_skip_verify = false
+allow_insecure = false
+```
+
+- `run` loads the platform default runtime config path when `-config` is omitted.
+  Linux: `$XDG_CONFIG_HOME/go-proxy-server/config.toml` or `~/.config/go-proxy-server/config.toml`
+  macOS: `~/Library/Application Support/go-proxy-server/config.toml`
+  Windows: `%APPDATA%\go-proxy-server\config.toml` or `~/go-proxy-server/config.toml`
+- `run` reads TOML first, then applies CLI overrides on top.
+- `run` still requires a TOML file to exist, even when you only want to override ports from the CLI.
+- Tunnel TLS rules in TOML:
+  `[tunnel_server]` must either provide `cert` and `key`, or set `allow_insecure = true`
+  `[tunnel_client]` must use one of `ca`, `insecure_skip_verify = true`, or `allow_insecure = true`
+  `allow_insecure = true` cannot be combined with `cert`/`key`, `ca`, `server_name`, or `insecure_skip_verify`
+  `insecure_skip_verify = true` keeps TLS enabled but skips certificate verification, so it does not require `ca`
+  server-side `allow_insecure = true` also works when managed certificate files already exist on disk
+- This keeps one-process startup configurable without changing the direct `socks`, `http`, or `both` commands.
+
+### Linux and macOS Service Installation
+
+`service install` always installs `go-proxy-server run` as the managed service command.
+
+Linux uses a system-level `systemd` service:
+
+```bash
+sudo ./bin/go-proxy-server service install
+sudo ./bin/go-proxy-server service install -config /etc/go-proxy-server/config.toml
+sudo ./bin/go-proxy-server service status
+```
+
+- If Linux `service install` omits `-config`, the installed unit resolves the runtime config in this order:
+  preserved `$XDG_CONFIG_HOME/go-proxy-server/config.toml`
+  otherwise `~SUDO_USER/.config/go-proxy-server/config.toml`
+- For predictable system deployments, prefer an explicit path such as `/etc/go-proxy-server/config.toml`.
+
+macOS uses a user-level `launchd` LaunchAgent:
+
+```bash
+./bin/go-proxy-server service install
+./bin/go-proxy-server service status
+```
+
+- On macOS, omitting `-config` makes the LaunchAgent use the current user's default config path at runtime.
 
 ### Add a User and Start a SOCKS5 Proxy
 

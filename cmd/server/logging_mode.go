@@ -3,6 +3,7 @@ package main
 import applogger "github.com/apeming/go-proxy-server/internal/logger"
 
 var longRunningCommands = map[string]struct{}{
+	"run":           {},
 	"socks":         {},
 	"http":          {},
 	"both":          {},
@@ -12,6 +13,9 @@ var longRunningCommands = map[string]struct{}{
 }
 
 func bootstrapLogLevel(args []string) applogger.LogLevel {
+	if shouldWriteUsageForNoArgs(args) {
+		return applogger.LevelNone
+	}
 	if len(args) == 0 {
 		return applogger.LevelInfo
 	}

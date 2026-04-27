@@ -63,3 +63,21 @@ func (server *ProxyServer) applyConfig(proxyConfig *models.ProxyConfig) {
 func errInvalidProxyType(proxyType string) error {
 	return fmt.Errorf("Invalid proxy type: %s", proxyType)
 }
+
+// StartWeb starts the web management server using the existing startup path.
+func (wm *Manager) StartWeb(port int) error {
+	wm.mu.Lock()
+	wm.webPort = port
+	wm.mu.Unlock()
+	return wm.StartServer()
+}
+
+// StartSocks starts the SOCKS proxy using the existing auto-start path.
+func (wm *Manager) StartSocks(port int, bindListen bool) error {
+	return wm.AutoStartProxy("socks5", port, bindListen)
+}
+
+// StartHTTP starts the HTTP proxy using the existing auto-start path.
+func (wm *Manager) StartHTTP(port int, bindListen bool) error {
+	return wm.AutoStartProxy("http", port, bindListen)
+}

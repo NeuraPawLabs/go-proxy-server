@@ -62,7 +62,7 @@ Use `-allow-insecure` only for trusted local testing from CLI. The Web UI intent
 
 ## Generate Certificates
 
-The tunnel server expects a TLS certificate and key, and the client currently requires an explicit `-ca` file.
+The tunnel server expects a TLS certificate and key unless you explicitly choose `-allow-insecure`. The client must choose one of `-ca`, `-insecure-skip-verify`, or `-allow-insecure`.
 
 For quick self-hosted deployment, you can create a small private CA and sign one server certificate with OpenSSL:
 
@@ -133,6 +133,14 @@ QUIC:
 ```
 
 The client keeps a persistent control connection and waits for route assignments.
+
+CLI and TOML TLS rules:
+
+- server mode: use `-cert` and `-key`, or `-allow-insecure`
+- client mode: use `-ca`, `-insecure-skip-verify`, or `-allow-insecure`
+- `-allow-insecure` cannot be combined with certificate verification flags
+- `-insecure-skip-verify` still uses TLS, but skips certificate validation
+- in TOML runtime, server-side `allow_insecure = true` still works even if managed certificate files already exist on disk
 
 In the Web UI, client mode uses verified TLS only:
 

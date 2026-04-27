@@ -23,6 +23,7 @@ type managedTunnelClientConfig struct {
 	ServerAddr         string `json:"serverAddr"`
 	ClientName         string `json:"clientName"`
 	Token              string `json:"token"`
+	CAFile             string `json:"caFile"`
 	UseManagedServerCA bool   `json:"useManagedServerCa"`
 	ServerName         string `json:"serverName"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
@@ -52,6 +53,7 @@ func normalizeManagedTunnelClientConfig(cfg managedTunnelClientConfig) managedTu
 	cfg.ServerAddr = strings.TrimSpace(cfg.ServerAddr)
 	cfg.ClientName = strings.TrimSpace(cfg.ClientName)
 	cfg.Token = strings.TrimSpace(cfg.Token)
+	cfg.CAFile = strings.TrimSpace(cfg.CAFile)
 	cfg.ServerName = strings.TrimSpace(cfg.ServerName)
 	return cfg
 }
@@ -95,6 +97,43 @@ func validateManagedTunnelClientRuntimeConfig(cfg managedTunnelClientConfig) err
 	return nil
 }
 
+// ValidateTunnelClientRuntimeConfig validates runtime tunnel-client settings before startup.
+func ValidateTunnelClientRuntimeConfig(engine, server, token, client, ca, serverName string, insecureSkipVerify, allowInsecure bool) error {
+	if allowInsecure && (ca != "" || serverName != "" || insecureSkipVerify) {
+		return fmt.Errorf("cannot combine -allow-insecure with TLS verification flags")
+	}
+
+	cfg := managedTunnelClientConfig{
+		Engine:             strings.TrimSpace(engine),
+		ServerAddr:         strings.TrimSpace(server),
+		Token:              strings.TrimSpace(token),
+		ClientName:         strings.TrimSpace(client),
+		CAFile:             strings.TrimSpace(ca),
+		ServerName:         strings.TrimSpace(serverName),
+		InsecureSkipVerify: insecureSkipVerify,
+		AllowInsecure:      allowInsecure,
+	}
+	if err := validateTunnelEngine(cfg.Engine); err != nil {
+		return err
+	}
+	if cfg.ServerAddr == "" {
+		return fmt.Errorf("tunnel server address is required")
+	}
+	if cfg.ClientName == "" {
+		return fmt.Errorf("tunnel client name is required")
+	}
+	if cfg.Token == "" {
+		return fmt.Errorf("tunnel token is required")
+	}
+	if err := validateManagedTunnelClientName(cfg.ClientName); err != nil {
+		return err
+	}
+	if err := validateManagedTunnelServerAddr(cfg.ServerAddr); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (wm *Manager) loadManagedTunnelClientConfig() (managedTunnelClientConfig, error) {
 	raw, err := config.GetSystemConfig(wm.db, config.KeyTunnelClientConfig)
 	if err != nil {
@@ -116,6 +155,27 @@ func (wm *Manager) saveManagedTunnelClientConfig(cfg managedTunnelClientConfig) 
 	if err := validateManagedTunnelClientConfig(cfg); err != nil {
 		return err
 	}
+	return wm.saveManagedTunnelClientConfigNormalized(cfg)
+}
+
+func (wm *Manager) saveManagedTunnelClientConfigForRuntime(cfg managedTunnelClientConfig) error {
+	cfg = normalizeManagedTunnelClientConfig(cfg)
+	if err := validateTunnelEngine(cfg.Engine); err != nil {
+		return err
+	}
+	if cfg.ServerAddr == "" {
+		return fmt.Errorf("tunnel server address is required")
+	}
+	if cfg.ClientName == "" {
+		return fmt.Errorf("tunnel client name is required")
+	}
+	if cfg.Token == "" {
+		return fmt.Errorf("tunnel token is required")
+	}
+	return wm.saveManagedTunnelClientConfigNormalized(cfg)
+}
+
+func (wm *Manager) saveManagedTunnelClientConfigNormalized(cfg managedTunnelClientConfig) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("encode tunnel client config: %w", err)
@@ -124,6 +184,9 @@ func (wm *Manager) saveManagedTunnelClientConfig(cfg managedTunnelClientConfig) 
 }
 
 func (wm *Manager) resolveManagedTunnelClientCAFile(cfg managedTunnelClientConfig) (string, bool, error) {
+	if cfg.CAFile != "" {
+		return cfg.CAFile, false, nil
+	}
 	if cfg.UseManagedServerCA {
 		_, _, caPath, err := managedTunnelServerTLSPaths()
 		if err != nil {
@@ -142,12 +205,16 @@ func (wm *Manager) resolveManagedTunnelClientCAFile(cfg managedTunnelClientConfi
 }
 
 func (wm *Manager) loadManagedTunnelClientTLSConfig(cfg managedTunnelClientConfig) (*tls.Config, string, error) {
-	caFile, _, err := wm.resolveManagedTunnelClientCAFile(cfg)
-	if err != nil {
-		return nil, "", err
-	}
 	if cfg.AllowInsecure {
 		return nil, "", nil
+	}
+	caFile := cfg.CAFile
+	if !cfg.InsecureSkipVerify {
+		var err error
+		caFile, _, err = wm.resolveManagedTunnelClientCAFile(cfg)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	clientTLS, err := tunnel.LoadClientTLSConfig(cfg.ServerAddr, caFile, cfg.ServerName, cfg.InsecureSkipVerify, cfg.AllowInsecure)
 	if err != nil {
@@ -175,7 +242,9 @@ func (wm *Manager) getManagedTunnelClientStatus() (managedTunnelClientStatusResp
 	if _, _, err := wm.resolveManagedTunnelClientCAFile(managedTunnelClientConfig{UseManagedServerCA: true}); err == nil {
 		managedCAAvailable = true
 	}
-	if cfg.UseManagedServerCA {
+	if cfg.CAFile != "" {
+		effectiveCAFile = cfg.CAFile
+	} else if cfg.UseManagedServerCA {
 		if caFile, _, err := wm.resolveManagedTunnelClientCAFile(cfg); err == nil {
 			effectiveCAFile = caFile
 		}
@@ -219,6 +288,30 @@ func (wm *Manager) startManagedTunnelClient(cfg managedTunnelClientConfig) error
 		applogger.Warn("Managed tunnel client TLS configuration failed for %s -> %s: %v", cfg.ClientName, cfg.ServerAddr, err)
 		return err
 	}
+	return wm.startManagedTunnelClientWithTLS(cfg, clientTLS)
+}
+
+func (wm *Manager) startManagedTunnelClientRuntime(cfg managedTunnelClientConfig, clientTLS *tls.Config) error {
+	cfg = normalizeManagedTunnelClientConfig(cfg)
+	if err := validateTunnelEngine(cfg.Engine); err != nil {
+		return err
+	}
+	if cfg.ServerAddr == "" {
+		return fmt.Errorf("tunnel server address is required")
+	}
+	if cfg.ClientName == "" {
+		return fmt.Errorf("tunnel client name is required")
+	}
+	if cfg.Token == "" {
+		return fmt.Errorf("tunnel token is required")
+	}
+	if err := wm.saveManagedTunnelClientConfigForRuntime(cfg); err != nil {
+		return err
+	}
+	return wm.startManagedTunnelClientWithTLS(cfg, clientTLS)
+}
+
+func (wm *Manager) startManagedTunnelClientWithTLS(cfg managedTunnelClientConfig, clientTLS *tls.Config) error {
 	applogger.Info(
 		"Managed tunnel client TLS ready: client=%s managed_ca=%t insecure_skip_verify=%t allow_insecure=%t",
 		cfg.ClientName,
@@ -226,7 +319,7 @@ func (wm *Manager) startManagedTunnelClient(cfg managedTunnelClientConfig) error
 		cfg.InsecureSkipVerify,
 		cfg.AllowInsecure,
 	)
-	if err := wm.saveManagedTunnelClientConfig(cfg); err != nil {
+	if err := wm.saveManagedTunnelClientConfigNormalized(cfg); err != nil {
 		return err
 	}
 
@@ -416,6 +509,32 @@ func validateManagedTunnelServerAddr(value string) error {
 		return fmt.Errorf("tunnel server address port must be within 1-65535")
 	}
 	return nil
+}
+
+// StartTunnelClientRuntime starts a managed tunnel client from runtime config.
+func (wm *Manager) StartTunnelClientRuntime(engine, server, token, client, ca, serverName string, insecureSkipVerify, allowInsecure bool) error {
+	if err := ValidateTunnelClientRuntimeConfig(engine, server, token, client, ca, serverName, insecureSkipVerify, allowInsecure); err != nil {
+		return err
+	}
+	cfg := managedTunnelClientConfig{
+		Engine:             engine,
+		ServerAddr:         server,
+		Token:              token,
+		ClientName:         client,
+		CAFile:             ca,
+		UseManagedServerCA: ca == "" && !insecureSkipVerify,
+		ServerName:         serverName,
+		InsecureSkipVerify: insecureSkipVerify,
+		AllowInsecure:      allowInsecure,
+	}
+	if allowInsecure {
+		return wm.startManagedTunnelClientRuntime(cfg, nil)
+	}
+	clientTLS, _, err := wm.loadManagedTunnelClientTLSConfig(cfg)
+	if err != nil {
+		return err
+	}
+	return wm.startManagedTunnelClientRuntime(cfg, clientTLS)
 }
 
 func validateManagedTunnelClientName(value string) error {

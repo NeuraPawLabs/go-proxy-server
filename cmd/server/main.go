@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -50,6 +51,8 @@ var (
 	waitForExitAckFn       = func() {
 		_, _ = fmt.Fscanln(os.Stdin)
 	}
+	shutdownSignalHandlerMu sync.RWMutex
+	shutdownSignalHandlerFn = shutdownService
 )
 
 func setupCleanupHandler() {
@@ -58,8 +61,35 @@ func setupCleanupHandler() {
 
 	go func() {
 		<-sigChan
-		shutdownService()
+		invokeShutdownSignalHandler()
 	}()
+}
+
+func setShutdownSignalHandler(handler func()) func() {
+	if handler == nil {
+		handler = shutdownService
+	}
+
+	shutdownSignalHandlerMu.Lock()
+	previous := shutdownSignalHandlerFn
+	shutdownSignalHandlerFn = handler
+	shutdownSignalHandlerMu.Unlock()
+
+	return func() {
+		shutdownSignalHandlerMu.Lock()
+		shutdownSignalHandlerFn = previous
+		shutdownSignalHandlerMu.Unlock()
+	}
+}
+
+func invokeShutdownSignalHandler() {
+	shutdownSignalHandlerMu.RLock()
+	handler := shutdownSignalHandlerFn
+	shutdownSignalHandlerMu.RUnlock()
+	if handler == nil {
+		handler = shutdownService
+	}
+	handler()
 }
 
 func shutdownService() {
@@ -220,6 +250,10 @@ func NewBootstrap(stdout, stderr io.Writer) (*Bootstrap, bool, error) {
 	}
 	if stderr == nil {
 		stderr = io.Discard
+	}
+	if shouldWriteUsageForNoArgs(currentArgsFn()[1:]) {
+		writeUsage(stdout)
+		return nil, true, nil
 	}
 	if handleGlobalCLIArgs(currentArgsFn()[1:], stdout) {
 		return nil, true, nil

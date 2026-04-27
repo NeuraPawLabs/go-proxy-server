@@ -62,7 +62,7 @@ QUIC：
 
 ## 生成证书
 
-内网穿透服务端需要 TLS 证书和私钥，客户端当前也要求显式传入 `-ca`。
+内网穿透服务端默认需要 TLS 证书和私钥，除非你显式使用 `-allow-insecure`。客户端则必须在 `-ca`、`-insecure-skip-verify`、`-allow-insecure` 三者中选择一种。
 
 如果你是自托管部署，最直接的方式是先生成一个私有 CA，再签发服务端证书：
 
@@ -133,6 +133,14 @@ QUIC：
 ```
 
 客户端会保持控制连接，并等待服务端下发路由。
+
+CLI 和 TOML 的 TLS 规则：
+
+- 服务端模式：使用 `-cert` 和 `-key`，或者使用 `-allow-insecure`
+- 客户端模式：使用 `-ca`、`-insecure-skip-verify`，或者使用 `-allow-insecure`
+- `-allow-insecure` 不能和其他证书校验相关参数同时使用
+- `-insecure-skip-verify` 仍然走 TLS，只是跳过证书校验
+- 在 TOML 运行模式下，服务端 `allow_insecure = true` 时，即使磁盘上已经存在托管证书文件，也仍然可以启动
 
 在 Web 后台中，客户端模式只支持校验证书后的 TLS：
 

@@ -53,6 +53,9 @@ sync.sh
 .env
 .env.local
 
+# Local planning/spec artifacts
+docs/superpowers/
+
 # Icon generation (keep only internal/tray/icon.ico)
 icon.png
 icon_*.png

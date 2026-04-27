@@ -27,6 +27,7 @@ type tunnelServerConfig struct {
 	Token              string `json:"token"`
 	CertFile           string `json:"certFile"`
 	KeyFile            string `json:"keyFile"`
+	AllowInsecure      bool   `json:"allowInsecure"`
 	AutoStart          bool   `json:"autoStart"`
 	AutoPortRangeStart int    `json:"autoPortRangeStart"`
 	AutoPortRangeEnd   int    `json:"autoPortRangeEnd"`
@@ -101,6 +102,9 @@ func validateManagedTunnelServerConfig(cfg tunnelServerConfig) error {
 	if err := validateTunnelEngine(cfg.Engine); err != nil {
 		return err
 	}
+	if cfg.AllowInsecure && tunnelEngineOrDefault(cfg.Engine) == tunnel.EngineQUIC {
+		return fmt.Errorf("quic tunnel server does not support insecure mode")
+	}
 	if cfg.AutoPortRangeStart == 0 && cfg.AutoPortRangeEnd == 0 {
 		return nil
 	}
@@ -112,6 +116,34 @@ func validateManagedTunnelServerConfig(cfg tunnelServerConfig) error {
 	}
 	if cfg.AutoPortRangeStart > cfg.AutoPortRangeEnd {
 		return fmt.Errorf("auto port range start must be less than or equal to end")
+	}
+	return nil
+}
+
+// ValidateTunnelServerRuntimeConfig validates runtime tunnel-server settings before startup.
+func ValidateTunnelServerRuntimeConfig(engine, token, cert, key string, allowInsecure bool, autoPortStart, autoPortEnd int) error {
+	cfg := tunnelServerConfig{
+		Engine:             strings.TrimSpace(engine),
+		Token:              strings.TrimSpace(token),
+		CertFile:           strings.TrimSpace(cert),
+		KeyFile:            strings.TrimSpace(key),
+		AllowInsecure:      allowInsecure,
+		AutoPortRangeStart: autoPortStart,
+		AutoPortRangeEnd:   autoPortEnd,
+	}
+	if err := validateManagedTunnelServerConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.Token == "" {
+		return fmt.Errorf("tunnel token is required")
+	}
+	hasCert := cfg.CertFile != ""
+	hasKey := cfg.KeyFile != ""
+	if cfg.AllowInsecure && (hasCert || hasKey) {
+		return fmt.Errorf("allow_insecure cannot be combined with cert or key")
+	}
+	if !cfg.AllowInsecure && (hasCert != hasKey) {
+		return fmt.Errorf("tunnel server requires cert and key when explicit TLS paths are provided")
 	}
 	return nil
 }
@@ -334,10 +366,14 @@ func newManagedTunnelServerRuntime(db *gorm.DB, cfg tunnelServerConfig, tlsConfi
 	case tunnel.EngineClassic:
 		server := tunnel.NewManagedServer(db, cfg.ListenAddr, cfg.PublicBind, cfg.Token)
 		server.TLSConfig = tlsConfig
+		server.AllowInsecure = cfg.AllowInsecure
 		server.AutoPortRangeStart = cfg.AutoPortRangeStart
 		server.AutoPortRangeEnd = cfg.AutoPortRangeEnd
 		return server, nil
 	case tunnel.EngineQUIC:
+		if cfg.AllowInsecure {
+			return nil, fmt.Errorf("quic tunnel server does not support insecure mode")
+		}
 		server := tunnel.NewQUICManagedServer(db, cfg.ListenAddr, cfg.PublicBind, cfg.Token)
 		server.TLSConfig = tlsConfig
 		server.AutoPortRangeStart = cfg.AutoPortRangeStart
@@ -408,4 +444,22 @@ func (wm *Manager) StartConfiguredTunnelServer() {
 			applogger.Error("Failed to auto-start managed %s tunnel server: %v", cfg.Engine, err)
 		}
 	}
+}
+
+// StartTunnelServerRuntime starts a managed tunnel server from runtime config.
+func (wm *Manager) StartTunnelServerRuntime(engine, listen, publicBind, token, cert, key string, allowInsecure bool, autoPortStart, autoPortEnd int) error {
+	if err := ValidateTunnelServerRuntimeConfig(engine, token, cert, key, allowInsecure, autoPortStart, autoPortEnd); err != nil {
+		return err
+	}
+	return wm.startManagedTunnelServer(tunnelServerConfig{
+		Engine:             engine,
+		ListenAddr:         listen,
+		PublicBind:         publicBind,
+		Token:              token,
+		CertFile:           cert,
+		KeyFile:            key,
+		AllowInsecure:      allowInsecure,
+		AutoPortRangeStart: autoPortStart,
+		AutoPortRangeEnd:   autoPortEnd,
+	})
 }

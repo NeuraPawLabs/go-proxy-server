@@ -4,10 +4,10 @@
 
 ## 日常使用
 
-推荐直接运行：
+推荐直接运行 Windows 版本：
 
 ```powershell
-bin\go-proxy-server-gui.exe
+bin\go-proxy-server.exe
 ```
 
 说明：
@@ -15,12 +15,6 @@ bin\go-proxy-server-gui.exe
 - Web 管理界面仅监听本机 `localhost`
 - 默认会自动选择一个可用随机端口
 - 可从托盘菜单打开管理界面
-
-如果需要调试，可运行控制台版本：
-
-```powershell
-bin\go-proxy-server.exe
-```
 
 ## 日志与数据目录
 
@@ -35,7 +29,6 @@ bin\go-proxy-server.exe
 - `app.log`：Windows 托盘 / GUI 模式日志
 
 补充说明：
-- 控制台模式默认输出到当前终端
 - 实际管理地址以启动日志或托盘提示为准
 
 ## 常见问题
@@ -52,10 +45,10 @@ go-proxy-server.exe web -port 8888
 
 ### 程序闪退
 
-优先运行控制台版本查看错误：
+优先查看应用数据目录中的 `app.log`：
 
 ```powershell
-go-proxy-server.exe
+Get-Content "$env:APPDATA\go-proxy-server\app.log" -Tail 200
 ```
 
 ## 构建
@@ -64,12 +57,11 @@ go-proxy-server.exe
 
 ```bash
 make build-windows
-make build-windows-gui
 ```
 
 说明：
-- `build-windows` 生成控制台版本
-- `build-windows-gui` 生成托盘 / GUI 版本
+- `build-windows` 生成托盘 / GUI 版本
+- `build-windows-gui` 仅作为 `build-windows` 的别名保留
 
 如果需要完整资源信息，构建过程会使用仓库中的资源脚本和清单文件。
 
