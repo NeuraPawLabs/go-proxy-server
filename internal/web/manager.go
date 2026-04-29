@@ -150,6 +150,7 @@ func (wm *Manager) startProxy(server *ProxyServer, port int, bindListen bool) er
 	}()
 
 	applogger.Info("%s proxy started on port %d", server.Type, port)
+	proxy.LogBindListenStartupDiagnostics(server.Type, port, bindListen)
 	return nil
 }
 

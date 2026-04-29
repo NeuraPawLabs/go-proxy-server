@@ -17,6 +17,7 @@ import (
 	"github.com/apeming/go-proxy-server/internal/auth"
 	"github.com/apeming/go-proxy-server/internal/constants"
 	applogger "github.com/apeming/go-proxy-server/internal/logger"
+	"github.com/apeming/go-proxy-server/internal/proxy"
 	runtimecfg "github.com/apeming/go-proxy-server/internal/runtime"
 	"github.com/apeming/go-proxy-server/internal/service"
 	"github.com/apeming/go-proxy-server/internal/tunnel"
@@ -64,12 +65,25 @@ var commandSpecs = []commandSpec{
 }
 
 var runConfigRuntimeFn = func(ctx context.Context, db *gorm.DB, cfg runtimecfg.Config) error {
+	proxy.SetBindPolicy(proxy.BindPolicy{ExitBindings: toProxyExitBindings(cfg.ExitBindings)})
 	manager := web.NewManager(db, cfg.Web.Port)
 	if err := manager.SyncAuthState(); err != nil {
 		return err
 	}
 	runner := runtimecfg.Runner{Manager: runtimecfg.NewWebManagerAdapter(manager)}
 	return runner.Start(ctx, cfg)
+}
+
+func toProxyExitBindings(bindings []runtimecfg.ExitBinding) []proxy.ExitBinding {
+	out := make([]proxy.ExitBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		out = append(out, proxy.ExitBinding{
+			Name:            binding.Name,
+			IngressLocalIP:  binding.IngressLocalIP,
+			OutboundLocalIP: binding.OutboundLocalIP,
+		})
+	}
+	return out
 }
 
 var installServiceFn = func(spec service.ServiceSpec) error {
@@ -391,6 +405,7 @@ func (a *App) handleSocksCommand(args []string) error {
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
 	}
+	proxy.SetBindPolicy(proxy.BindPolicy{})
 	return runProxyServer("SOCKS5", *port, *bindListen)
 }
 
@@ -405,6 +420,7 @@ func (a *App) handleHTTPCommand(args []string) error {
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
 	}
+	proxy.SetBindPolicy(proxy.BindPolicy{})
 	return runProxyServer("HTTP", *port, *bindListen)
 }
 
@@ -420,6 +436,7 @@ func (a *App) handleBothCommand(args []string) error {
 	if err := a.syncProxyRuntimeState(); err != nil {
 		return err
 	}
+	proxy.SetBindPolicy(proxy.BindPolicy{})
 
 	errChan := make(chan error, 2)
 	go func() {

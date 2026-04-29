@@ -90,6 +90,16 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[[exit_bindings]]
+name = "aliyun-eip-a"
+ingress_local_ip = "172.16.0.10"
+outbound_local_ip = "172.16.0.10"
+
+[[exit_bindings]]
+name = "aliyun-eip-b"
+ingress_local_ip = "172.16.0.11"
+outbound_local_ip = "172.16.0.11"
+
 [tunnel_server]
 enabled = false
 engine = "classic"
@@ -113,6 +123,8 @@ server_name = ""
 insecure_skip_verify = false
 allow_insecure = false
 ```
+
+When `bind_listen = true`, the proxy uses the local IP that accepted the ingress connection as the outbound source address. If `[[exit_bindings]]` is configured, `ingress_local_ip` is mapped to `outbound_local_ip` first. On Alibaba Cloud EIP NAT deployments, use the ECS private IPs assigned to the host, not the public EIPs; multiple EIP exits require distinct secondary private IPs and source-based routing.
 
 - Tunnel TLS rules in TOML:
   `[tunnel_server]` must either provide `cert` and `key`, or set `allow_insecure = true`

@@ -140,6 +140,16 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[[exit_bindings]]
+name = "aliyun-eip-a"
+ingress_local_ip = "172.16.0.10"
+outbound_local_ip = "172.16.0.10"
+
+[[exit_bindings]]
+name = "aliyun-eip-b"
+ingress_local_ip = "172.16.0.11"
+outbound_local_ip = "172.16.0.11"
+
 [tunnel_server]
 enabled = false
 engine = "classic"
@@ -163,6 +173,8 @@ server_name = ""
 insecure_skip_verify = false
 allow_insecure = false
 ```
+
+`bind_listen = true` 时，程序会把客户端连接命中的本机 IP 用作出站源地址；如果配置了 `[[exit_bindings]]`，则先按 `ingress_local_ip` 查表，再使用对应的 `outbound_local_ip`。阿里云 EIP 默认 NAT 模式下，ECS 系统通常只能看到私网 IP，不能直接把公网 EIP 写成 `outbound_local_ip`。多 EIP 场景建议为每个 EIP 绑定不同的辅助私网 IP，并在系统内配置对应的源地址策略路由。
 
 - `-config` 省略时，`run` 会读取平台默认的运行配置路径。
   Linux：`$XDG_CONFIG_HOME/go-proxy-server/config.toml` 或 `~/.config/go-proxy-server/config.toml`

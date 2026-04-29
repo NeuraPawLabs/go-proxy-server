@@ -140,6 +140,16 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[[exit_bindings]]
+name = "aliyun-eip-a"
+ingress_local_ip = "172.16.0.10"
+outbound_local_ip = "172.16.0.10"
+
+[[exit_bindings]]
+name = "aliyun-eip-b"
+ingress_local_ip = "172.16.0.11"
+outbound_local_ip = "172.16.0.11"
+
 [tunnel_server]
 enabled = false
 engine = "classic"
@@ -163,6 +173,8 @@ server_name = ""
 insecure_skip_verify = false
 allow_insecure = false
 ```
+
+When `bind_listen = true`, the proxy uses the local IP that accepted the client connection as the outbound source address. If `[[exit_bindings]]` is configured, the proxy maps `ingress_local_ip` to `outbound_local_ip` first. On Alibaba Cloud EIP NAT deployments, the ECS guest usually sees private IPs rather than public EIPs, so do not configure the public EIP as `outbound_local_ip` unless it is actually assigned to the host. For multiple EIPs, bind each EIP to a distinct secondary private IP and configure source-based routing on the host.
 
 - `run` loads the platform default runtime config path when `-config` is omitted.
   Linux: `$XDG_CONFIG_HOME/go-proxy-server/config.toml` or `~/.config/go-proxy-server/config.toml`

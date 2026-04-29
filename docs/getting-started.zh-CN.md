@@ -90,6 +90,16 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[[exit_bindings]]
+name = "aliyun-eip-a"
+ingress_local_ip = "172.16.0.10"
+outbound_local_ip = "172.16.0.10"
+
+[[exit_bindings]]
+name = "aliyun-eip-b"
+ingress_local_ip = "172.16.0.11"
+outbound_local_ip = "172.16.0.11"
+
 [tunnel_server]
 enabled = false
 engine = "classic"
@@ -113,6 +123,8 @@ server_name = ""
 insecure_skip_verify = false
 allow_insecure = false
 ```
+
+`bind_listen = true` 时，代理默认使用入口连接命中的本机 IP 作为出站源地址。配置 `[[exit_bindings]]` 后，会先将 `ingress_local_ip` 映射到 `outbound_local_ip`。在阿里云 EIP NAT 模式下，这里应填写 ECS 网卡上的私网 IP，而不是公网 EIP；多 EIP 出口需要不同辅助私网 IP 和对应的源地址策略路由。
 
 - TOML 中的 tunnel TLS 规则：
   `[tunnel_server]` 要么提供 `cert` 和 `key`，要么设置 `allow_insecure = true`

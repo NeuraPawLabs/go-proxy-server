@@ -180,7 +180,7 @@ func validateAndConnect(host string, bindListen bool, localAddr *net.TCPAddr, ti
 	dialer := &net.Dialer{
 		Timeout: timeout.Connect,
 	}
-	if bindListen {
+	if bindListen && localAddr != nil {
 		dialer.LocalAddr = localAddr
 	}
 	destConn, err := dialer.Dial("tcp", host)
@@ -276,6 +276,8 @@ func HandleHTTPConnection(conn net.Conn, bindListen bool) {
 		return
 	}
 	localAddr := &net.TCPAddr{IP: tcpLocalAddr.IP}
+	outboundLocalAddr, bindDecision := resolveOutboundLocalAddr(bindListen, localAddr)
+	logBindDecision("HTTP", clientIP, bindDecision)
 
 	// Get timeout configuration once at the beginning
 	timeout := config.GetTimeout()
@@ -376,11 +378,11 @@ func HandleHTTPConnection(conn net.Conn, bindListen bool) {
 		// Handle the request based on method
 		if req.Method == http.MethodConnect {
 			// HTTPS tunneling (CONNECT method) - closes connection after tunnel
-			handleHTTPSConnect(conn, req, bindListen, localAddr, timeout)
+			handleHTTPSConnect(conn, req, bindListen, outboundLocalAddr, timeout)
 			return
 		} else {
 			// Regular HTTP proxy - may support keep-alive
-			shouldClose := handleHTTPRequest(conn, req, reader, bindListen, localAddr, timeout)
+			shouldClose := handleHTTPRequest(conn, req, reader, bindListen, outboundLocalAddr, timeout)
 			if shouldClose {
 				return
 			}
@@ -502,7 +504,7 @@ func handleHTTPRequest(conn net.Conn, req *http.Request, reader *bufio.Reader, b
 
 	// Use HTTP client with connection pooling
 	var transport *http.Transport
-	if bindListen {
+	if bindListen && localAddr != nil {
 		// Use cached transport for this local address to enable connection pooling
 		transport = getTransportForLocalAddr(localAddr)
 	} else {

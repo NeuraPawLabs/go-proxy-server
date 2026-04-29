@@ -66,6 +66,11 @@ port = 9090
 enabled = true
 port = 1081
 bind_listen = true
+
+[[exit_bindings]]
+name = "aliyun-eip-a"
+ingress_local_ip = "172.16.0.10"
+outbound_local_ip = "172.16.0.20"
 `
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(data)), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -84,6 +89,14 @@ bind_listen = true
 	}
 	if cfg.HTTP.Enabled || cfg.HTTP.Port != 8081 {
 		t.Fatalf("unexpected http defaults: %+v", cfg.HTTP)
+	}
+	if len(cfg.ExitBindings) != 1 {
+		t.Fatalf("exit bindings length = %d, want 1", len(cfg.ExitBindings))
+	}
+	if cfg.ExitBindings[0].Name != "aliyun-eip-a" ||
+		cfg.ExitBindings[0].IngressLocalIP != "172.16.0.10" ||
+		cfg.ExitBindings[0].OutboundLocalIP != "172.16.0.20" {
+		t.Fatalf("unexpected exit binding: %+v", cfg.ExitBindings[0])
 	}
 }
 
@@ -177,6 +190,24 @@ func TestValidateRejectsEmptyRuntime(t *testing.T) {
 	err := (Config{}).Validate()
 	if err == nil || !strings.Contains(err.Error(), "no enabled services in runtime config") {
 		t.Fatalf("expected no enabled services error, got %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidExitBindingIP(t *testing.T) {
+	cfg := Config{
+		Socks: ProxyConfig{Enabled: true, Port: 1080, BindListen: true},
+		ExitBindings: []ExitBinding{
+			{
+				Name:            "bad",
+				IngressLocalIP:  "172.16.0.10",
+				OutboundLocalIP: "not-an-ip",
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "invalid outbound_local_ip") {
+		t.Fatalf("expected invalid outbound_local_ip error, got %v", err)
 	}
 }
 

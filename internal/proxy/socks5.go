@@ -114,6 +114,8 @@ func HandleSocks5Connection(conn net.Conn, bindListen bool) {
 		return
 	}
 	localAddr := &net.TCPAddr{IP: tcpLocalAddr.IP}
+	outboundLocalAddr, bindDecision := resolveOutboundLocalAddr(bindListen, localAddr)
+	logBindDecision("SOCKS5", clientIP, bindDecision)
 
 	// Check if the client's IP address is in the whitelist first
 	if auth.CheckIPWhitelist(clientIP) {
@@ -210,8 +212,8 @@ func HandleSocks5Connection(conn net.Conn, bindListen bool) {
 	dialer := &net.Dialer{
 		Timeout: timeout.Connect,
 	}
-	if bindListen {
-		dialer.LocalAddr = localAddr
+	if bindListen && outboundLocalAddr != nil {
+		dialer.LocalAddr = outboundLocalAddr
 	}
 	destConn, err := dialer.Dial("tcp", host)
 

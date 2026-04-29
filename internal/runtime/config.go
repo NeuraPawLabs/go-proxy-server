@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	stdruntime "runtime"
@@ -19,6 +20,7 @@ type Config struct {
 	Web          WebConfig          `toml:"web"`
 	Socks        ProxyConfig        `toml:"socks"`
 	HTTP         ProxyConfig        `toml:"http"`
+	ExitBindings []ExitBinding      `toml:"exit_bindings"`
 	TunnelServer TunnelServerConfig `toml:"tunnel_server"`
 	TunnelClient TunnelClientConfig `toml:"tunnel_client"`
 }
@@ -34,6 +36,13 @@ type ProxyConfig struct {
 	Enabled    bool `toml:"enabled"`
 	Port       int  `toml:"port"`
 	BindListen bool `toml:"bind_listen"`
+}
+
+// ExitBinding maps a proxy ingress local IP to an outbound source IP.
+type ExitBinding struct {
+	Name            string `toml:"name"`
+	IngressLocalIP  string `toml:"ingress_local_ip"`
+	OutboundLocalIP string `toml:"outbound_local_ip"`
 }
 
 // TunnelServerConfig configures the tunnel server service.
@@ -145,6 +154,9 @@ func (cfg Config) Validate() error {
 	if !cfg.Web.Enabled && !cfg.Socks.Enabled && !cfg.HTTP.Enabled && !cfg.TunnelServer.Enabled && !cfg.TunnelClient.Enabled {
 		return fmt.Errorf("no enabled services in runtime config")
 	}
+	if err := validateExitBindings(cfg.ExitBindings); err != nil {
+		return err
+	}
 	if cfg.TunnelServer.Enabled {
 		if err := validateTunnelEngine("tunnel server", cfg.TunnelServer.Engine); err != nil {
 			return err
@@ -186,6 +198,26 @@ func (cfg Config) Validate() error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateExitBindings(bindings []ExitBinding) error {
+	seen := make(map[string]struct{}, len(bindings))
+	for i, binding := range bindings {
+		ingress := strings.TrimSpace(binding.IngressLocalIP)
+		outbound := strings.TrimSpace(binding.OutboundLocalIP)
+		if net.ParseIP(ingress) == nil {
+			return fmt.Errorf("exit_bindings[%d] invalid ingress_local_ip: %q", i, binding.IngressLocalIP)
+		}
+		ip := net.ParseIP(outbound)
+		if ip == nil || ip.IsUnspecified() {
+			return fmt.Errorf("exit_bindings[%d] invalid outbound_local_ip: %q", i, binding.OutboundLocalIP)
+		}
+		if _, ok := seen[ingress]; ok {
+			return fmt.Errorf("exit_bindings[%d] duplicate ingress_local_ip: %q", i, binding.IngressLocalIP)
+		}
+		seen[ingress] = struct{}{}
 	}
 	return nil
 }
