@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/apeming/go-proxy-server/internal/auth"
+	appconfig "github.com/apeming/go-proxy-server/internal/config"
 	"github.com/apeming/go-proxy-server/internal/constants"
 	applogger "github.com/apeming/go-proxy-server/internal/logger"
 	"github.com/apeming/go-proxy-server/internal/proxy"
@@ -107,7 +107,10 @@ var serviceStatusFn = func(name string) (service.Status, error) {
 }
 
 var resolveServiceInstallConfigPathFn = resolveServiceInstallConfigPath
-var lookupUserFn = user.Lookup
+var ensureDefaultConfigFileFn = runtimecfg.EnsureDefaultConfigFile
+var installServiceExecutableFn = installServiceExecutable
+
+const linuxServiceExecutablePath = "/usr/local/bin/go-proxy-server"
 
 var commandRegistry = func() map[string]commandSpec {
 	registry := make(map[string]commandSpec, len(commandSpecs))
@@ -752,19 +755,36 @@ func (a *App) handleServiceCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		workDir, err := os.Getwd()
-		if err != nil {
-			return err
-		}
+		goos := currentGOOS()
 		if err := service.ValidateName(*name); err != nil {
 			return err
 		}
 		effectiveConfigPath := strings.TrimSpace(*configPath)
-		if effectiveConfigPath == "" && currentGOOS() == "linux" {
-			effectiveConfigPath, err = resolveServiceInstallConfigPathFn(currentGOOS())
+		if effectiveConfigPath != "" {
+			effectiveConfigPath, err = filepath.Abs(effectiveConfigPath)
+			if err != nil {
+				return fmt.Errorf("resolve runtime config path: %w", err)
+			}
+		} else {
+			effectiveConfigPath, err = resolveServiceInstallConfigPathFn(goos)
 			if err != nil {
 				return err
 			}
+		}
+		if effectiveConfigPath != "" {
+			if err := ensureDefaultConfigFileFn(effectiveConfigPath); err != nil {
+				return err
+			}
+		}
+		if goos == "linux" {
+			execPath, err = installServiceExecutableFn(execPath)
+			if err != nil {
+				return err
+			}
+		}
+		workDir := ""
+		if effectiveConfigPath != "" {
+			workDir = filepath.Dir(effectiveConfigPath)
 		}
 		spec := service.BuildRunSpec(execPath, workDir, effectiveConfigPath)
 		spec.Name = *name
@@ -819,6 +839,68 @@ func (a *App) handleServiceCommand(args []string) error {
 	}
 }
 
+func installServiceExecutable(execPath string) (string, error) {
+	return installExecutableToPath(execPath, linuxServiceExecutablePath)
+}
+
+func installExecutableToPath(sourcePath, targetPath string) (string, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return "", fmt.Errorf("service executable path is required")
+	}
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath == "" {
+		return "", fmt.Errorf("service install target path is required")
+	}
+
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("stat service executable: %w", err)
+	}
+	if targetInfo, err := os.Stat(targetPath); err == nil && os.SameFile(sourceInfo, targetInfo) {
+		return targetPath, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return "", fmt.Errorf("create service executable directory: %w", err)
+	}
+
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("open service executable: %w", err)
+	}
+	defer source.Close()
+
+	temp, err := os.CreateTemp(filepath.Dir(targetPath), ".go-proxy-server-*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary service executable: %w", err)
+	}
+	tempPath := temp.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if _, err := io.Copy(temp, source); err != nil {
+		_ = temp.Close()
+		return "", fmt.Errorf("copy service executable: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary service executable: %w", err)
+	}
+	if err := os.Chmod(tempPath, 0o755); err != nil {
+		return "", fmt.Errorf("chmod service executable: %w", err)
+	}
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		return "", fmt.Errorf("install service executable: %w", err)
+	}
+	removeTemp = false
+
+	return targetPath, nil
+}
+
 func parseServiceName(args []string, usage string, stdout io.Writer) (string, bool, error) {
 	fs := newCommandFlagSet("service name", usage, stdout)
 	name := fs.String("name", service.DefaultServiceName, "Service name")
@@ -865,25 +947,12 @@ func nonEmptyStatusLines(lines []string) []string {
 }
 
 func resolveServiceInstallConfigPath(goos string) (string, error) {
-	if goos != "linux" {
-		return "", nil
+	if goos == "linux" {
+		return filepath.Join("/root", ".config", "go-proxy-server", "config.toml"), nil
 	}
-
-	if xdgConfigHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdgConfigHome != "" {
-		return filepath.Join(xdgConfigHome, "go-proxy-server", "config.toml"), nil
-	}
-
-	sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER"))
-	if sudoUser == "" || sudoUser == "root" {
-		return runtimecfg.DefaultConfigPath()
-	}
-
-	account, err := lookupUserFn(sudoUser)
+	configDir, err := appconfig.ConfigDirForOS(goos)
 	if err != nil {
-		return "", fmt.Errorf("resolve sudo user %q: %w", sudoUser, err)
+		return "", err
 	}
-	if strings.TrimSpace(account.HomeDir) == "" {
-		return "", fmt.Errorf("resolve sudo user %q home directory: empty", sudoUser)
-	}
-	return filepath.Join(account.HomeDir, ".config", "go-proxy-server", "config.toml"), nil
+	return filepath.Join(configDir, "config.toml"), nil
 }

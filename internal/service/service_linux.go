@@ -179,10 +179,6 @@ func validateServiceSpec(spec ServiceSpec) error {
 
 func renderSystemdUnit(spec ServiceSpec) string {
 	args := append([]string{spec.ExecPath}, spec.Args...)
-	workingDir := spec.WorkingDirectory
-	if workingDir == "" {
-		workingDir = "/"
-	}
 
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
@@ -191,9 +187,14 @@ func renderSystemdUnit(spec ServiceSpec) string {
 	b.WriteString("\nAfter=network.target\n\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
-	b.WriteString("WorkingDirectory=")
-	b.WriteString(escapeSystemdValue(workingDir))
-	b.WriteString("\nExecStart=")
+	b.WriteString("User=root\n")
+	b.WriteString("Environment=HOME=/root\n")
+	if spec.WorkingDirectory != "" {
+		b.WriteString("WorkingDirectory=")
+		b.WriteString(escapeSystemdValue(spec.WorkingDirectory))
+		b.WriteString("\n")
+	}
+	b.WriteString("ExecStart=")
 	b.WriteString(joinSystemdArgs(args))
 	b.WriteString("\nRestart=always\nRestartSec=5\n")
 	b.WriteString("TimeoutStopSec=10\nKillMode=mixed\nKillSignal=SIGTERM\n")

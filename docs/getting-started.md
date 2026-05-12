@@ -77,7 +77,7 @@ Example `config.toml`:
 
 ```toml
 [web]
-enabled = true
+enabled = false
 port = 8080
 
 [socks]
@@ -147,9 +147,9 @@ sudo ./bin/go-proxy-server service install -config /etc/go-proxy-server/config.t
 sudo ./bin/go-proxy-server service status
 ```
 
-- If Linux `service install` omits `-config`, the installed unit resolves the runtime config in this order:
-  preserved `$XDG_CONFIG_HOME/go-proxy-server/config.toml`
-  otherwise `~SUDO_USER/.config/go-proxy-server/config.toml`
+- `service install` creates the runtime config file if it is missing and leaves existing config files unchanged.
+- On Linux, `service install` copies the current executable to `/usr/local/bin/go-proxy-server` and uses that stable path in the systemd unit.
+- If Linux `service install` omits `-config`, the installed unit uses `/root/.config/go-proxy-server/config.toml`.
 - For predictable system deployment, prefer `-config /etc/go-proxy-server/config.toml`.
 
 macOS installs a user-level `launchd` LaunchAgent:
@@ -159,7 +159,7 @@ macOS installs a user-level `launchd` LaunchAgent:
 ./bin/go-proxy-server service status
 ```
 
-- On macOS, omitting `-config` makes the LaunchAgent use the current user's default config path at runtime.
+- On macOS, omitting `-config` creates the current user's default config file if it is missing and points the LaunchAgent at that path.
 
 ## User and Allowlist Management
 

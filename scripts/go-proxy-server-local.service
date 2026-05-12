@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
+Environment=HOME=/root
 WorkingDirectory=/opt/go-proxy-server
 ExecStart=/opt/go-proxy-server/bin/go-proxy-server both -socks-port 11223 -http-port 11224 -bind-listen
 Restart=always

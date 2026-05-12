@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -155,6 +156,35 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err == nil || !strings.Contains(err.Error(), "runtime config not found") {
 		t.Fatalf("expected missing runtime config error, got %v", err)
+	}
+}
+
+func TestEnsureDefaultConfigFileRejectsExistingDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("create config path directory: %v", err)
+	}
+
+	err := EnsureDefaultConfigFile(path)
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected non-regular config path error, got %v", err)
+	}
+}
+
+func TestEnsureDefaultConfigFileRejectsBrokenSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires extra privileges on Windows")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(filepath.Join(dir, "missing.toml"), path); err != nil {
+		t.Fatalf("create broken symlink: %v", err)
+	}
+
+	err := EnsureDefaultConfigFile(path)
+	if err == nil || !strings.Contains(err.Error(), "is not usable") {
+		t.Fatalf("expected unusable config path error, got %v", err)
 	}
 }
 

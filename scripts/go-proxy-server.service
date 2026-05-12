@@ -1,12 +1,12 @@
-# Systemd service file for go-proxy-server (installed via go install)
-# This file assumes the binary is installed to /usr/local/bin/server
+# Systemd service file for go-proxy-server
+# Prefer installing this unit through the CLI instead of copying it manually.
+# `service install` installs the binary to /usr/local/bin/go-proxy-server,
+# creates the runtime config if it is missing, reloads systemd, and starts
+# the service.
 #
-# Installation steps:
-# 1. Install the binary: go install github.com/apeming/go-proxy-server/cmd/server@latest
-# 2. Copy binary to system path: sudo cp ~/go/bin/server /usr/local/bin/
-# 3. Copy this file: sudo cp scripts/go-proxy-server.service /etc/systemd/system/
-# 4. Reload systemd: sudo systemctl daemon-reload
-# 5. Enable and start: sudo systemctl enable --now go-proxy-server
+# Installation:
+# 1. Build the binary: make build
+# 2. Install the service: sudo ./bin/go-proxy-server service install
 #
 # For local build deployment, use go-proxy-server-local.service instead
 
@@ -17,8 +17,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
+Environment=HOME=/root
 WorkingDirectory=/root
-ExecStart=/usr/local/bin/server both -socks-port 11223 -http-port 11224 -bind-listen
+ExecStart=/usr/local/bin/go-proxy-server run -config /root/.config/go-proxy-server/config.toml
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/go-proxy-server.log

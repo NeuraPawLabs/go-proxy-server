@@ -487,7 +487,7 @@ func readSocks5Request(conn net.Conn) (string, error) {
 	}
 	port := binary.BigEndian.Uint16(portBytes)
 
-	return fmt.Sprintf("%s:%d", host, port), nil
+	return net.JoinHostPort(host, fmt.Sprintf("%d", port)), nil
 }
 
 // sendSocks5Reply sends a SOCKS5 reply message with the specified reply code

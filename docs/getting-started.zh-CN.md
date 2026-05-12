@@ -77,7 +77,7 @@ make build
 
 ```toml
 [web]
-enabled = true
+enabled = false
 port = 8080
 
 [socks]
@@ -147,9 +147,9 @@ sudo ./bin/go-proxy-server service install -config /etc/go-proxy-server/config.t
 sudo ./bin/go-proxy-server service status
 ```
 
-- Linux 下如果 `service install` 省略 `-config`，安装出的 unit 会按以下顺序解析运行配置：
-  优先使用保留下来的 `$XDG_CONFIG_HOME/go-proxy-server/config.toml`
-  否则回退到 `SUDO_USER` 对应用户的 `~/.config/go-proxy-server/config.toml`
+- `service install` 会在 runtime 配置文件缺失时创建默认配置，已有配置不会被覆盖。
+- Linux 下 `service install` 会把当前可执行文件复制到 `/usr/local/bin/go-proxy-server`，并在 systemd unit 中使用这个稳定路径。
+- Linux 下如果 `service install` 省略 `-config`，安装出的 unit 会使用 `/root/.config/go-proxy-server/config.toml`。
 - 如果要做稳定的系统部署，建议显式传 `-config /etc/go-proxy-server/config.toml`。
 
 macOS 会安装当前用户级别的 `launchd` LaunchAgent：
@@ -159,7 +159,7 @@ macOS 会安装当前用户级别的 `launchd` LaunchAgent：
 ./bin/go-proxy-server service status
 ```
 
-- macOS 下省略 `-config` 时，LaunchAgent 会在运行时读取当前用户的默认配置路径。
+- macOS 下省略 `-config` 时，会创建缺失的当前用户默认配置文件，并让 LaunchAgent 使用该路径。
 
 ## 用户与白名单管理
 

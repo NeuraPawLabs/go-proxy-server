@@ -25,6 +25,44 @@ type Config struct {
 	TunnelClient TunnelClientConfig `toml:"tunnel_client"`
 }
 
+const defaultConfigFileContent = `[web]
+enabled = false
+port = 8080
+
+[socks]
+enabled = true
+port = 1080
+bind_listen = false
+
+[http]
+enabled = false
+port = 8081
+bind_listen = false
+
+[tunnel_server]
+enabled = false
+engine = "classic"
+listen = ":7000"
+public_bind = "0.0.0.0"
+token = ""
+cert = ""
+key = ""
+allow_insecure = false
+auto_port_start = 0
+auto_port_end = 0
+
+[tunnel_client]
+enabled = false
+engine = "classic"
+server = ""
+token = ""
+client = ""
+ca = ""
+server_name = ""
+insecure_skip_verify = false
+allow_insecure = false
+`
+
 // WebConfig configures the built-in web service.
 type WebConfig struct {
 	Enabled bool `toml:"enabled"`
@@ -121,6 +159,37 @@ func LoadConfig(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// EnsureDefaultConfigFile writes a runnable default runtime config if path is missing.
+func EnsureDefaultConfigFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("runtime config path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create runtime config directory: %w", err)
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				return fmt.Errorf("runtime config path is not usable: %w", statErr)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("runtime config path exists but is not a regular file: %s", path)
+			}
+			return nil
+		}
+		return fmt.Errorf("create runtime config: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(defaultConfigFileContent); err != nil {
+		return fmt.Errorf("write runtime config: %w", err)
+	}
+	return nil
 }
 
 // ApplyOverrides merges CLI override values on top of a loaded config.

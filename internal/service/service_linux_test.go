@@ -22,6 +22,39 @@ func TestLinuxUnitIncludesRunCommandAndConfigPath(t *testing.T) {
 	}
 }
 
+func TestLinuxUnitSetsRootHomeForSystemdEnvironment(t *testing.T) {
+	spec := ServiceSpec{
+		Name:        "go-proxy-server",
+		Description: "Go Proxy Server",
+		ExecPath:    "/opt/go-proxy-server",
+		Args:        []string{"run", "-config", "/root/.config/go-proxy-server/config.toml"},
+	}
+
+	unit := renderSystemdUnit(spec)
+	for _, want := range []string{
+		"User=root\n",
+		"Environment=HOME=/root\n",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("unit missing %q: %q", want, unit)
+		}
+	}
+}
+
+func TestLinuxUnitOmitsWorkingDirectoryWhenUnset(t *testing.T) {
+	spec := ServiceSpec{
+		Name:        "go-proxy-server",
+		Description: "Go Proxy Server",
+		ExecPath:    "/usr/local/bin/go-proxy-server",
+		Args:        []string{"run", "-config", "/root/.config/go-proxy-server/config.toml"},
+	}
+
+	unit := renderSystemdUnit(spec)
+	if strings.Contains(unit, "WorkingDirectory=") {
+		t.Fatalf("unit should omit WorkingDirectory when unset: %q", unit)
+	}
+}
+
 func TestValidateNameRejectsPathLikeAndUnsafeNames(t *testing.T) {
 	cases := []string{
 		"",

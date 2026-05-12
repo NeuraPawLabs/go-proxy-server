@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -440,15 +439,24 @@ func TestAppHandleRunCommandTreatsShutdownSignalAsCleanExit(t *testing.T) {
 
 func TestAppHandleServiceInstallBuildsRunSpec(t *testing.T) {
 	origInstall := installServiceFn
+	origGOOS := currentGOOS
 	origResolve := resolveServiceInstallConfigPathFn
-	origLookup := lookupUserFn
+	origEnsureConfig := ensureDefaultConfigFileFn
 	defer func() { installServiceFn = origInstall }()
+	defer func() { currentGOOS = origGOOS }()
 	defer func() { resolveServiceInstallConfigPathFn = origResolve }()
-	defer func() { lookupUserFn = origLookup }()
+	defer func() { ensureDefaultConfigFileFn = origEnsureConfig }()
 
+	currentGOOS = func() string { return "darwin" }
 	resolveServiceInstallConfigPathFn = func(goos string) (string, error) {
 		t.Fatal("resolveServiceInstallConfigPathFn should not be called when -config is provided")
 		return "", nil
+	}
+	ensureDefaultConfigFileFn = func(path string) error {
+		if path != "/etc/go-proxy-server/config.toml" {
+			t.Fatalf("ensureDefaultConfigFileFn path = %q, want /etc/go-proxy-server/config.toml", path)
+		}
+		return nil
 	}
 
 	var captured service.ServiceSpec
@@ -469,15 +477,177 @@ func TestAppHandleServiceInstallBuildsRunSpec(t *testing.T) {
 	}
 }
 
+func TestAppHandleServiceInstallConvertsRelativeConfigPathToAbsolute(t *testing.T) {
+	origInstall := installServiceFn
+	origGOOS := currentGOOS
+	origResolve := resolveServiceInstallConfigPathFn
+	origEnsureConfig := ensureDefaultConfigFileFn
+	defer func() { installServiceFn = origInstall }()
+	defer func() { currentGOOS = origGOOS }()
+	defer func() { resolveServiceInstallConfigPathFn = origResolve }()
+	defer func() { ensureDefaultConfigFileFn = origEnsureConfig }()
+
+	currentGOOS = func() string { return "darwin" }
+	resolveServiceInstallConfigPathFn = func(goos string) (string, error) {
+		t.Fatal("resolveServiceInstallConfigPathFn should not be called when -config is provided")
+		return "", nil
+	}
+
+	workDir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+
+	wantConfigPath := filepath.Join(workDir, "config.toml")
+	ensureDefaultConfigFileFn = func(path string) error {
+		if path != wantConfigPath {
+			t.Fatalf("ensureDefaultConfigFileFn path = %q, want %q", path, wantConfigPath)
+		}
+		return nil
+	}
+
+	var captured service.ServiceSpec
+	installServiceFn = func(spec service.ServiceSpec) error {
+		captured = spec
+		return nil
+	}
+
+	app := NewApp(newTestDB(t), io.Discard, io.Discard)
+	if err := app.handleServiceCommand([]string{"install", "-config", "config.toml"}); err != nil {
+		t.Fatalf("handleServiceCommand: %v", err)
+	}
+	if len(captured.Args) != 3 || captured.Args[0] != "run" || captured.Args[1] != "-config" || captured.Args[2] != wantConfigPath {
+		t.Fatalf("unexpected service args: %v", captured.Args)
+	}
+	if captured.WorkingDirectory != workDir {
+		t.Fatalf("service working directory = %q, want %q", captured.WorkingDirectory, workDir)
+	}
+}
+
+func TestAppHandleServiceInstallLinuxInstallsExecutableToSystemPath(t *testing.T) {
+	origInstall := installServiceFn
+	origGOOS := currentGOOS
+	origResolve := resolveServiceInstallConfigPathFn
+	origEnsureConfig := ensureDefaultConfigFileFn
+	origInstallExecutable := installServiceExecutableFn
+	defer func() { installServiceFn = origInstall }()
+	defer func() { currentGOOS = origGOOS }()
+	defer func() { resolveServiceInstallConfigPathFn = origResolve }()
+	defer func() { ensureDefaultConfigFileFn = origEnsureConfig }()
+	defer func() { installServiceExecutableFn = origInstallExecutable }()
+
+	currentGOOS = func() string { return "linux" }
+	resolveServiceInstallConfigPathFn = func(goos string) (string, error) {
+		t.Fatal("resolveServiceInstallConfigPathFn should not be called when -config is provided")
+		return "", nil
+	}
+	ensureDefaultConfigFileFn = func(path string) error { return nil }
+	installServiceExecutableFn = func(execPath string) (string, error) {
+		if strings.TrimSpace(execPath) == "" {
+			t.Fatal("installServiceExecutableFn got empty executable path")
+		}
+		return "/usr/local/bin/go-proxy-server", nil
+	}
+
+	var captured service.ServiceSpec
+	installServiceFn = func(spec service.ServiceSpec) error {
+		captured = spec
+		return nil
+	}
+
+	app := NewApp(newTestDB(t), io.Discard, io.Discard)
+	if err := app.handleServiceCommand([]string{"install", "-config", "/etc/go-proxy-server/config.toml"}); err != nil {
+		t.Fatalf("handleServiceCommand: %v", err)
+	}
+	if captured.ExecPath != "/usr/local/bin/go-proxy-server" {
+		t.Fatalf("service exec path = %q, want /usr/local/bin/go-proxy-server", captured.ExecPath)
+	}
+	if captured.WorkingDirectory != "/etc/go-proxy-server" {
+		t.Fatalf("service working directory = %q, want /etc/go-proxy-server", captured.WorkingDirectory)
+	}
+}
+
+func TestInstallExecutableToPathCopiesExecutableWithMode(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source-bin")
+	target := filepath.Join(dir, "usr", "local", "bin", "go-proxy-server")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write source executable: %v", err)
+	}
+
+	got, err := installExecutableToPath(source, target)
+	if err != nil {
+		t.Fatalf("installExecutableToPath: %v", err)
+	}
+	if got != target {
+		t.Fatalf("installed path = %q, want %q", got, target)
+	}
+
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read installed executable: %v", err)
+	}
+	if string(data) != "#!/bin/sh\nexit 0\n" {
+		t.Fatalf("installed executable content = %q", string(data))
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat installed executable: %v", err)
+	}
+	if gotMode := info.Mode().Perm(); gotMode != 0o755 {
+		t.Fatalf("installed executable mode = %v, want 0755", gotMode)
+	}
+}
+
+func TestAppHandleServiceInstallCreatesMissingRuntimeConfig(t *testing.T) {
+	origInstall := installServiceFn
+	origGOOS := currentGOOS
+	defer func() { installServiceFn = origInstall }()
+	defer func() { currentGOOS = origGOOS }()
+
+	currentGOOS = func() string { return "darwin" }
+	installServiceFn = func(spec service.ServiceSpec) error {
+		return nil
+	}
+
+	configPath := filepath.Join(t.TempDir(), "go-proxy-server", "config.toml")
+	app := NewApp(newTestDB(t), io.Discard, io.Discard)
+	if err := app.handleServiceCommand([]string{"install", "-config", configPath}); err != nil {
+		t.Fatalf("handleServiceCommand: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"[web]", "enabled = false", "[socks]", "enabled = true", "port = 1080"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated config missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAppHandleServiceInstallWithoutConfigBuildsResolvedLinuxRunSpec(t *testing.T) {
 	origInstall := installServiceFn
 	origGOOS := currentGOOS
 	origResolve := resolveServiceInstallConfigPathFn
-	origLookup := lookupUserFn
+	origEnsureConfig := ensureDefaultConfigFileFn
+	origInstallExecutable := installServiceExecutableFn
 	defer func() { installServiceFn = origInstall }()
 	defer func() { currentGOOS = origGOOS }()
 	defer func() { resolveServiceInstallConfigPathFn = origResolve }()
-	defer func() { lookupUserFn = origLookup }()
+	defer func() { ensureDefaultConfigFileFn = origEnsureConfig }()
+	defer func() { installServiceExecutableFn = origInstallExecutable }()
 
 	var captured service.ServiceSpec
 	installServiceFn = func(spec service.ServiceSpec) error {
@@ -485,31 +655,42 @@ func TestAppHandleServiceInstallWithoutConfigBuildsResolvedLinuxRunSpec(t *testi
 		return nil
 	}
 	currentGOOS = func() string { return "linux" }
-	resolveServiceInstallConfigPathFn = func(goos string) (string, error) {
-		if goos != "linux" {
-			t.Fatalf("resolveServiceInstallConfigPathFn goos = %q, want linux", goos)
+	t.Setenv("XDG_CONFIG_HOME", "/home/test/.config")
+	t.Setenv("SUDO_USER", "test")
+	ensureDefaultConfigFileFn = func(path string) error {
+		if path != "/root/.config/go-proxy-server/config.toml" {
+			t.Fatalf("ensureDefaultConfigFileFn path = %q, want /root/.config/go-proxy-server/config.toml", path)
 		}
-		return "/home/test/.config/go-proxy-server/config.toml", nil
+		return nil
+	}
+	installServiceExecutableFn = func(execPath string) (string, error) {
+		return "/usr/local/bin/go-proxy-server", nil
 	}
 
 	app := NewApp(newTestDB(t), io.Discard, io.Discard)
 	if err := app.handleServiceCommand([]string{"install"}); err != nil {
 		t.Fatalf("handleServiceCommand: %v", err)
 	}
-	if len(captured.Args) != 3 || captured.Args[0] != "run" || captured.Args[1] != "-config" || captured.Args[2] != "/home/test/.config/go-proxy-server/config.toml" {
+	if len(captured.Args) != 3 || captured.Args[0] != "run" || captured.Args[1] != "-config" || captured.Args[2] != "/root/.config/go-proxy-server/config.toml" {
 		t.Fatalf("unexpected service args: %v", captured.Args)
+	}
+	if captured.ExecPath != "/usr/local/bin/go-proxy-server" {
+		t.Fatalf("service exec path = %q, want /usr/local/bin/go-proxy-server", captured.ExecPath)
+	}
+	if captured.WorkingDirectory != "/root/.config/go-proxy-server" {
+		t.Fatalf("service working directory = %q, want /root/.config/go-proxy-server", captured.WorkingDirectory)
 	}
 }
 
-func TestAppHandleServiceInstallWithoutConfigKeepsPlainRunOnDarwin(t *testing.T) {
+func TestAppHandleServiceInstallWithoutConfigCreatesDefaultRunSpecOnDarwin(t *testing.T) {
 	origInstall := installServiceFn
 	origGOOS := currentGOOS
 	origResolve := resolveServiceInstallConfigPathFn
-	origLookup := lookupUserFn
+	origEnsureConfig := ensureDefaultConfigFileFn
 	defer func() { installServiceFn = origInstall }()
 	defer func() { currentGOOS = origGOOS }()
 	defer func() { resolveServiceInstallConfigPathFn = origResolve }()
-	defer func() { lookupUserFn = origLookup }()
+	defer func() { ensureDefaultConfigFileFn = origEnsureConfig }()
 
 	var captured service.ServiceSpec
 	installServiceFn = func(spec service.ServiceSpec) error {
@@ -518,58 +699,67 @@ func TestAppHandleServiceInstallWithoutConfigKeepsPlainRunOnDarwin(t *testing.T)
 	}
 	currentGOOS = func() string { return "darwin" }
 	resolveServiceInstallConfigPathFn = func(goos string) (string, error) {
-		t.Fatalf("resolveServiceInstallConfigPathFn should not be called for %s", goos)
-		return "", nil
+		if goos != "darwin" {
+			t.Fatalf("resolveServiceInstallConfigPathFn goos = %q, want darwin", goos)
+		}
+		return "/Users/test/Library/Application Support/go-proxy-server/config.toml", nil
+	}
+	ensureDefaultConfigFileFn = func(path string) error {
+		if path != "/Users/test/Library/Application Support/go-proxy-server/config.toml" {
+			t.Fatalf("ensureDefaultConfigFileFn path = %q, want darwin default config path", path)
+		}
+		return nil
 	}
 
 	app := NewApp(newTestDB(t), io.Discard, io.Discard)
 	if err := app.handleServiceCommand([]string{"install"}); err != nil {
 		t.Fatalf("handleServiceCommand: %v", err)
 	}
-	if len(captured.Args) != 1 || captured.Args[0] != "run" {
+	if len(captured.Args) != 3 || captured.Args[0] != "run" || captured.Args[1] != "-config" || captured.Args[2] != "/Users/test/Library/Application Support/go-proxy-server/config.toml" {
 		t.Fatalf("unexpected service args: %v", captured.Args)
+	}
+	if captured.WorkingDirectory != "/Users/test/Library/Application Support/go-proxy-server" {
+		t.Fatalf("service working directory = %q, want darwin default config dir", captured.WorkingDirectory)
 	}
 }
 
-func TestResolveServiceInstallConfigPathLinuxPrefersXDGConfigHome(t *testing.T) {
-	origLookup := lookupUserFn
-	defer func() { lookupUserFn = origLookup }()
+func TestResolveServiceInstallConfigPathDarwinUsesDefaultConfigPath(t *testing.T) {
+	t.Setenv("HOME", "/Users/test")
 
-	t.Setenv("XDG_CONFIG_HOME", "/custom/xdg")
-	t.Setenv("SUDO_USER", "alice")
-	lookupUserFn = func(username string) (*user.User, error) {
-		t.Fatalf("lookupUserFn should not be called when XDG_CONFIG_HOME is set, got %q", username)
-		return nil, nil
-	}
-
-	got, err := resolveServiceInstallConfigPath("linux")
+	got, err := resolveServiceInstallConfigPath("darwin")
 	if err != nil {
 		t.Fatalf("resolveServiceInstallConfigPath: %v", err)
 	}
-	want := "/custom/xdg/go-proxy-server/config.toml"
+	want := filepath.Join("/Users/test", "Library", "Application Support", "go-proxy-server", "config.toml")
 	if got != want {
 		t.Fatalf("config path = %q, want %q", got, want)
 	}
 }
 
-func TestResolveServiceInstallConfigPathLinuxUsesSudoUserHomeFallback(t *testing.T) {
-	origLookup := lookupUserFn
-	defer func() { lookupUserFn = origLookup }()
-
-	t.Setenv("XDG_CONFIG_HOME", "")
+func TestResolveServiceInstallConfigPathLinuxUsesRootConfigPath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/custom/xdg")
 	t.Setenv("SUDO_USER", "alice")
-	lookupUserFn = func(username string) (*user.User, error) {
-		if username != "alice" {
-			t.Fatalf("lookupUserFn username = %q, want alice", username)
-		}
-		return &user.User{Username: "alice", HomeDir: "/home/alice"}, nil
-	}
 
 	got, err := resolveServiceInstallConfigPath("linux")
 	if err != nil {
 		t.Fatalf("resolveServiceInstallConfigPath: %v", err)
 	}
-	want := "/home/alice/.config/go-proxy-server/config.toml"
+	want := "/root/.config/go-proxy-server/config.toml"
+	if got != want {
+		t.Fatalf("config path = %q, want %q", got, want)
+	}
+}
+
+func TestResolveServiceInstallConfigPathLinuxIgnoresSudoUserHomeFallback(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "/root")
+	t.Setenv("SUDO_USER", "alice")
+
+	got, err := resolveServiceInstallConfigPath("linux")
+	if err != nil {
+		t.Fatalf("resolveServiceInstallConfigPath: %v", err)
+	}
+	want := "/root/.config/go-proxy-server/config.toml"
 	if got != want {
 		t.Fatalf("config path = %q, want %q", got, want)
 	}
