@@ -120,7 +120,9 @@ func runProxyServer(proxyType string, port int, bindListen bool) error {
 	defer listener.Close()
 
 	applogger.Info("%s proxy server started on port %d", proxyType, port)
-	proxy.LogBindListenStartupDiagnostics(proxyType, port, bindListen)
+	if err := proxy.LogBindListenStartupDiagnostics(proxyType, port, bindListen); err != nil {
+		return err
+	}
 
 	consecutiveErrors := 0
 	for {

@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	appconfig "github.com/apeming/go-proxy-server/internal/config"
 	"github.com/apeming/go-proxy-server/internal/tunnel"
@@ -98,6 +99,40 @@ outbound_local_ip = "172.16.0.20"
 		cfg.ExitBindings[0].IngressLocalIP != "172.16.0.10" ||
 		cfg.ExitBindings[0].OutboundLocalIP != "172.16.0.20" {
 		t.Fatalf("unexpected exit binding: %+v", cfg.ExitBindings[0])
+	}
+}
+
+func TestLoadConfigParsesExitProbeConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	data := `
+[socks]
+enabled = true
+port = 1080
+bind_listen = true
+
+[exit_probe]
+enabled = true
+probe_url = "https://example.test/ip"
+timeout = "2s"
+`
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(data)), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if !cfg.ExitProbe.Enabled {
+		t.Fatalf("exit probe enabled = false, want true")
+	}
+	if cfg.ExitProbe.ProbeURL != "https://example.test/ip" {
+		t.Fatalf("exit probe URL = %q, want https://example.test/ip", cfg.ExitProbe.ProbeURL)
+	}
+	if cfg.ExitProbe.Timeout != 2*time.Second {
+		t.Fatalf("exit probe timeout = %s, want 2s", cfg.ExitProbe.Timeout)
 	}
 }
 

@@ -140,6 +140,11 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[exit_probe]
+enabled = false
+probe_url = "https://api.ipify.org"
+timeout = "3s"
+
 [[exit_bindings]]
 name = "aliyun-eip-a"
 ingress_local_ip = "172.16.0.10"
@@ -174,7 +179,9 @@ insecure_skip_verify = false
 allow_insecure = false
 ```
 
-`bind_listen = true` 时，程序会把客户端连接命中的本机 IP 用作出站源地址；如果配置了 `[[exit_bindings]]`，则先按 `ingress_local_ip` 查表，再使用对应的 `outbound_local_ip`。阿里云 EIP 默认 NAT 模式下，ECS 系统通常只能看到私网 IP，不能直接把公网 EIP 写成 `outbound_local_ip`。多 EIP 场景建议为每个 EIP 绑定不同的辅助私网 IP，并在系统内配置对应的源地址策略路由。
+`bind_listen = true` 时，程序会把客户端连接命中的本机 IP 用作出站源地址；如果配置了 `[[exit_bindings]]`，则先按 `ingress_local_ip` 查表，再使用对应的 `outbound_local_ip`。`127.0.0.1` 或 `::1` 这类 loopback 入口在没有显式映射时会走系统默认出口，避免本机使用代理时被绑定到 loopback 出站。
+
+启用 `[exit_probe]` 且未配置显式 `[[exit_bindings]]` 时，启动诊断会枚举非 loopback 的本机网卡 IP，并分别绑定这些本机 IP 请求探测地址，日志中输出探测到的 `local_ip -> public_ip` 出口映射。探测失败会中止启动，因为自动出口选择无法被验证。已配置显式 `[[exit_bindings]]` 时，代理使用手动映射并跳过出口探测。阿里云 EIP 默认 NAT 模式下，ECS 系统通常只能看到私网 IP，不能直接把公网 EIP 写成 `outbound_local_ip`。多 EIP 场景建议为每个 EIP 绑定不同的辅助私网 IP，并在系统内配置对应的源地址策略路由。
 
 - `-config` 省略时，`run` 会读取平台默认的运行配置路径。
   Linux：`$XDG_CONFIG_HOME/go-proxy-server/config.toml` 或 `~/.config/go-proxy-server/config.toml`

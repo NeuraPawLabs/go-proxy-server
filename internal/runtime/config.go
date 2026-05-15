@@ -3,10 +3,12 @@ package runtime
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	stdruntime "runtime"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -21,6 +23,7 @@ type Config struct {
 	Socks        ProxyConfig        `toml:"socks"`
 	HTTP         ProxyConfig        `toml:"http"`
 	ExitBindings []ExitBinding      `toml:"exit_bindings"`
+	ExitProbe    ExitProbeConfig    `toml:"exit_probe"`
 	TunnelServer TunnelServerConfig `toml:"tunnel_server"`
 	TunnelClient TunnelClientConfig `toml:"tunnel_client"`
 }
@@ -38,6 +41,11 @@ bind_listen = false
 enabled = false
 port = 8081
 bind_listen = false
+
+[exit_probe]
+enabled = false
+probe_url = "https://api.ipify.org"
+timeout = "3s"
 
 [tunnel_server]
 enabled = false
@@ -83,6 +91,13 @@ type ExitBinding struct {
 	OutboundLocalIP string `toml:"outbound_local_ip"`
 }
 
+// ExitProbeConfig configures optional public egress IP probing.
+type ExitProbeConfig struct {
+	Enabled  bool          `toml:"enabled"`
+	ProbeURL string        `toml:"probe_url"`
+	Timeout  time.Duration `toml:"timeout"`
+}
+
 // TunnelServerConfig configures the tunnel server service.
 type TunnelServerConfig struct {
 	Enabled       bool   `toml:"enabled"`
@@ -125,6 +140,10 @@ func DefaultConfig() Config {
 		Web:   WebConfig{Port: 8080},
 		Socks: ProxyConfig{Port: 1080},
 		HTTP:  ProxyConfig{Port: 8081},
+		ExitProbe: ExitProbeConfig{
+			ProbeURL: "https://api.ipify.org",
+			Timeout:  3 * time.Second,
+		},
 		TunnelServer: TunnelServerConfig{
 			Engine:     "classic",
 			Listen:     ":7000",
@@ -226,6 +245,9 @@ func (cfg Config) Validate() error {
 	if err := validateExitBindings(cfg.ExitBindings); err != nil {
 		return err
 	}
+	if err := validateExitProbe(cfg.ExitProbe); err != nil {
+		return err
+	}
 	if cfg.TunnelServer.Enabled {
 		if err := validateTunnelEngine("tunnel server", cfg.TunnelServer.Engine); err != nil {
 			return err
@@ -267,6 +289,23 @@ func (cfg Config) Validate() error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateExitProbe(cfg ExitProbeConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Timeout <= 0 {
+		return fmt.Errorf("exit_probe timeout must be greater than 0")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(cfg.ProbeURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("exit_probe probe_url must be an absolute URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("exit_probe probe_url must use http or https")
 	}
 	return nil
 }

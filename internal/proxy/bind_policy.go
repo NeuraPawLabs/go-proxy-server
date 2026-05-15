@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -21,6 +23,7 @@ type ExitBinding struct {
 type BindPolicy struct {
 	Enabled      bool
 	ExitBindings []ExitBinding
+	ExitProbe    ExitProbeConfig
 }
 
 // BindDecision describes how an outbound local address was selected.
@@ -29,6 +32,7 @@ type BindDecision struct {
 	IngressLocalIP  string
 	OutboundLocalIP string
 	Mapped          bool
+	DefaultRoute    bool
 	Warning         string
 }
 
@@ -70,9 +74,6 @@ func (p BindPolicy) ResolveOutboundLocalAddr(ingressLocalAddr *net.TCPAddr) (*ne
 		decision.Warning = "bind-listen enabled but ingress local address is unspecified"
 		return nil, decision
 	}
-	if ingressLocalAddr.IP.IsLoopback() {
-		decision.Warning = "bind-listen enabled with loopback ingress local address"
-	}
 
 	for _, binding := range p.ExitBindings {
 		if !ipStringEqual(binding.IngressLocalIP, ingressIP) {
@@ -86,6 +87,11 @@ func (p BindPolicy) ResolveOutboundLocalAddr(ingressLocalAddr *net.TCPAddr) (*ne
 		decision.OutboundLocalIP = normalizedIP(outboundIP)
 		decision.Mapped = true
 		return &net.TCPAddr{IP: outboundIP}, decision
+	}
+
+	if ingressLocalAddr.IP.IsLoopback() {
+		decision.DefaultRoute = true
+		return nil, decision
 	}
 
 	decision.OutboundLocalIP = ingressIP
@@ -110,15 +116,20 @@ func logBindDecision(proxyType, clientIP string, decision BindDecision) {
 			proxyType, clientIP, decision.IngressLocalIP, decision.OutboundLocalIP)
 		return
 	}
+	if decision.DefaultRoute {
+		logger.Debug("%s bind-listen using system default route for client %s loopback ingress_local_ip=%s",
+			proxyType, clientIP, decision.IngressLocalIP)
+		return
+	}
 	logger.Debug("%s bind-listen using ingress local IP for client %s: %s",
 		proxyType, clientIP, decision.OutboundLocalIP)
 }
 
 // LogBindListenStartupDiagnostics logs host-side information useful for cloud
 // EIP/NAT deployments where public EIPs may not exist on the guest NIC.
-func LogBindListenStartupDiagnostics(proxyType string, port int, bindListen bool) {
+func LogBindListenStartupDiagnostics(proxyType string, port int, bindListen bool) error {
 	if !bindListen {
-		return
+		return nil
 	}
 
 	ips, err := localInterfaceIPs()
@@ -126,16 +137,24 @@ func LogBindListenStartupDiagnostics(proxyType string, port int, bindListen bool
 	for _, ip := range ips {
 		localIPs[ip] = struct{}{}
 	}
+	policy := currentBindPolicy(true)
 	if err != nil {
 		logger.Warn("%s bind-listen enabled on port %d; failed to list local interface IPs: %v", proxyType, port, err)
+		if policy.ExitProbe.Enabled && len(policy.ExitBindings) == 0 {
+			return fmt.Errorf("%s exit probe failed to list local interface IPs: %w", proxyType, err)
+		}
 	} else {
 		logger.Info("%s bind-listen enabled on port %d; local interface IPs: %s", proxyType, port, strings.Join(ips, ", "))
 	}
 
-	policy := currentBindPolicy(true)
+	if err == nil {
+		if probeErr := logExitProbeDiagnostics(context.Background(), proxyType, policy.ExitProbe, ips, len(policy.ExitBindings) > 0); probeErr != nil {
+			return probeErr
+		}
+	}
 	if len(policy.ExitBindings) == 0 {
-		logger.Warn("%s bind-listen has no explicit exit bindings; outbound source IP will follow the ingress local IP", proxyType)
-		return
+		logger.Warn("%s bind-listen has no explicit exit bindings; non-loopback outbound source IP will follow the ingress local IP, loopback ingress uses the system default route", proxyType)
+		return nil
 	}
 	for _, binding := range policy.ExitBindings {
 		name := strings.TrimSpace(binding.Name)
@@ -153,6 +172,46 @@ func LogBindListenStartupDiagnostics(proxyType string, port int, bindListen bool
 				proxyType, name, binding.OutboundLocalIP)
 		}
 	}
+	return nil
+}
+
+var probeExitIPsForDiagnostics = probeExitIPs
+
+func logExitProbeDiagnostics(ctx context.Context, proxyType string, cfg ExitProbeConfig, localIPs []string, hasExplicitBindings bool) error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if hasExplicitBindings {
+		logger.Info("%s exit probe skipped because explicit exit bindings are configured", proxyType)
+		return nil
+	}
+
+	cfg = normalizeExitProbeConfig(cfg)
+	logger.Info("%s exit probe enabled; probe_url=%s timeout=%s", proxyType, cfg.ProbeURL, cfg.Timeout)
+
+	return logExitProbeResults(proxyType, probeExitIPsForDiagnostics(ctx, cfg, localIPs), true)
+}
+
+func logExitProbeResults(proxyType string, results []ExitProbeResult, failOnError bool) error {
+	if len(results) == 0 {
+		logger.Warn("%s exit probe found no non-loopback local IP candidates", proxyType)
+		if failOnError {
+			return fmt.Errorf("%s exit probe found no non-loopback local IP candidates", proxyType)
+		}
+		return nil
+	}
+	for _, result := range results {
+		if result.Error != "" {
+			logger.Warn("%s exit probe failed local_ip=%s error=%s", proxyType, result.LocalIP, result.Error)
+			if failOnError {
+				return fmt.Errorf("%s exit probe failed for local_ip=%s: %s", proxyType, result.LocalIP, result.Error)
+			}
+			continue
+		}
+		logger.Info("%s exit probe mapped local_ip=%s public_ip=%s", proxyType, result.LocalIP, result.PublicIP)
+	}
+	return nil
 }
 
 func configuredIPIsLocal(value string, localIPs map[string]struct{}) bool {

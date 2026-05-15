@@ -65,7 +65,10 @@ var commandSpecs = []commandSpec{
 }
 
 var runConfigRuntimeFn = func(ctx context.Context, db *gorm.DB, cfg runtimecfg.Config) error {
-	proxy.SetBindPolicy(proxy.BindPolicy{ExitBindings: toProxyExitBindings(cfg.ExitBindings)})
+	proxy.SetBindPolicy(proxy.BindPolicy{
+		ExitBindings: toProxyExitBindings(cfg.ExitBindings),
+		ExitProbe:    toProxyExitProbeConfig(cfg.ExitProbe),
+	})
 	manager := web.NewManager(db, cfg.Web.Port)
 	if err := manager.SyncAuthState(); err != nil {
 		return err
@@ -84,6 +87,14 @@ func toProxyExitBindings(bindings []runtimecfg.ExitBinding) []proxy.ExitBinding 
 		})
 	}
 	return out
+}
+
+func toProxyExitProbeConfig(cfg runtimecfg.ExitProbeConfig) proxy.ExitProbeConfig {
+	return proxy.ExitProbeConfig{
+		Enabled:  cfg.Enabled,
+		ProbeURL: cfg.ProbeURL,
+		Timeout:  cfg.Timeout,
+	}
 }
 
 var installServiceFn = func(spec service.ServiceSpec) error {

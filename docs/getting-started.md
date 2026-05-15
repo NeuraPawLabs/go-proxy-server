@@ -90,6 +90,11 @@ enabled = false
 port = 8081
 bind_listen = false
 
+[exit_probe]
+enabled = false
+probe_url = "https://api.ipify.org"
+timeout = "3s"
+
 [[exit_bindings]]
 name = "aliyun-eip-a"
 ingress_local_ip = "172.16.0.10"
@@ -124,7 +129,9 @@ insecure_skip_verify = false
 allow_insecure = false
 ```
 
-When `bind_listen = true`, the proxy uses the local IP that accepted the ingress connection as the outbound source address. If `[[exit_bindings]]` is configured, `ingress_local_ip` is mapped to `outbound_local_ip` first. On Alibaba Cloud EIP NAT deployments, use the ECS private IPs assigned to the host, not the public EIPs; multiple EIP exits require distinct secondary private IPs and source-based routing.
+When `bind_listen = true`, the proxy uses the local IP that accepted the ingress connection as the outbound source address. If `[[exit_bindings]]` is configured, `ingress_local_ip` is mapped to `outbound_local_ip` first. Loopback ingress such as `127.0.0.1` or `::1` uses the system default route unless an explicit exit binding maps it to another local IP.
+
+When `[exit_probe]` is enabled and no explicit `[[exit_bindings]]` are configured, startup diagnostics enumerate non-loopback local interface IPs, bind a probe request to each local IP, and log the detected `local_ip -> public_ip` exit mapping. Probe failure stops startup because automatic exit selection cannot be verified. When explicit `[[exit_bindings]]` are configured, the proxy uses the manual mappings and skips exit probing. On Alibaba Cloud EIP NAT deployments, use the ECS private IPs assigned to the host, not the public EIPs; multiple EIP exits require distinct secondary private IPs and source-based routing.
 
 - Tunnel TLS rules in TOML:
   `[tunnel_server]` must either provide `cert` and `key`, or set `allow_insecure = true`

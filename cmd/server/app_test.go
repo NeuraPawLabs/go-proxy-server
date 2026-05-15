@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -171,6 +172,24 @@ func TestAppRunVersionFlagWritesVersionToStdout(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr for version: %q", stderr.String())
+	}
+}
+
+func TestToProxyExitProbeConfigCopiesRuntimeSettings(t *testing.T) {
+	got := toProxyExitProbeConfig(runtimecfg.ExitProbeConfig{
+		Enabled:  true,
+		ProbeURL: "https://example.test/ip",
+		Timeout:  2 * time.Second,
+	})
+
+	if !got.Enabled {
+		t.Fatalf("enabled = false, want true")
+	}
+	if got.ProbeURL != "https://example.test/ip" {
+		t.Fatalf("probe URL = %q, want https://example.test/ip", got.ProbeURL)
+	}
+	if got.Timeout != 2*time.Second {
+		t.Fatalf("timeout = %s, want 2s", got.Timeout)
 	}
 }
 

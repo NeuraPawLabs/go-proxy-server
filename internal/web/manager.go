@@ -116,6 +116,15 @@ func (wm *Manager) startProxy(server *ProxyServer, port int, bindListen bool) er
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			listener.Close()
+		}
+	}()
+
+	if err = proxy.LogBindListenStartupDiagnostics(server.Type, port, bindListen); err != nil {
+		return err
+	}
 
 	server.Port = port
 	server.BindListen = bindListen
@@ -150,7 +159,6 @@ func (wm *Manager) startProxy(server *ProxyServer, port int, bindListen bool) er
 	}()
 
 	applogger.Info("%s proxy started on port %d", server.Type, port)
-	proxy.LogBindListenStartupDiagnostics(server.Type, port, bindListen)
 	return nil
 }
 
