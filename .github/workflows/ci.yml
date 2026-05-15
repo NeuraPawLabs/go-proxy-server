@@ -104,7 +104,9 @@ jobs:
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          go build -tags frontend_embed -trimpath -ldflags="-s -w" -o dist/go-proxy-server ./cmd/server
+          version="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+          go build -tags frontend_embed -trimpath -ldflags="-s -w -X main.version=${version}" -o dist/go-proxy-server ./cmd/server
+          test "$(dist/go-proxy-server --version)" = "${version}"
 
   cross-build:
     name: Cross Build ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -154,4 +156,5 @@ jobs:
             binary_name="${binary_name}.exe"
           fi
 
-          go build -tags frontend_embed -trimpath -ldflags="-s -w" -o "dist/${binary_name}" ./cmd/server
+          version="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+          go build -tags frontend_embed -trimpath -ldflags="-s -w -X main.version=${version}" -o "dist/${binary_name}" ./cmd/server

@@ -100,7 +100,7 @@ jobs:
             binary_name="${binary_name}.exe"
           fi
 
-          go build -tags frontend_embed -trimpath -ldflags="-s -w" -o "dist/${binary_name}" ./cmd/server
+          go build -tags frontend_embed -trimpath -ldflags="-s -w -X main.version=${TAG_NAME}" -o "dist/${binary_name}" ./cmd/server
 
           cp "dist/${binary_name}" "staging/${binary_name}"
           cp README.md staging/
