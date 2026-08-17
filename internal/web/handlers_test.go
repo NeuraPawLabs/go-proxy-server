@@ -1318,6 +1318,9 @@ func TestAdminBootstrapSessionFlow(t *testing.T) {
 	if storedHash == "" {
 		t.Fatal("expected admin password hash to be stored")
 	}
+	if !strings.HasPrefix(storedHash, "$argon2id$") {
+		t.Fatalf("expected Argon2id admin password hash, got %q", storedHash)
+	}
 
 	bootstrapCookie := bootstrapRec.Result().Cookies()
 	if len(bootstrapCookie) == 0 || bootstrapCookie[0].Name != adminSessionCookieName {
@@ -1457,6 +1460,35 @@ func TestAdminLoginLogoutAndProtectedRoute(t *testing.T) {
 
 	if afterLogoutRec.Code != http.StatusUnauthorized {
 		t.Fatalf("unexpected protected route status after logout: got %d want %d", afterLogoutRec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminLoginUpgradesLegacyPasswordHash(t *testing.T) {
+	db := newTestDB(t)
+	wm := newTestManager(db)
+
+	legacyHash, err := auth.HashPassword([]byte("admin-pass-123"))
+	if err != nil {
+		t.Fatalf("hash legacy admin password: %v", err)
+	}
+	if err := config.SetSystemConfig(db, config.KeyWebAdminPassword, string(legacyHash)); err != nil {
+		t.Fatalf("seed legacy admin password: %v", err)
+	}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", bytes.NewBufferString(`{"password":"admin-pass-123"}`))
+	loginRec := httptest.NewRecorder()
+	wm.handleAdminLogin(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("unexpected login status: got %d want %d body=%s", loginRec.Code, http.StatusOK, loginRec.Body.String())
+	}
+
+	storedHash, err := config.GetSystemConfig(db, config.KeyWebAdminPassword)
+	if err != nil {
+		t.Fatalf("load upgraded admin password hash: %v", err)
+	}
+	if !strings.HasPrefix(storedHash, "$argon2id$") {
+		t.Fatalf("expected legacy admin password hash to be upgraded to Argon2id, got %q", storedHash)
 	}
 }
 

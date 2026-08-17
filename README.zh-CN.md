@@ -10,7 +10,7 @@ Go Proxy Server 是一个使用 Go 编写的自托管服务，单个二进制同
 - **Web 管理：** 通过本地 Web 后台管理用户、白名单、日志、代理配置和隧道路由。
 - **隧道控制面：** 支持一个 `tunnel-server` 管理多个常驻 `tunnel-client`。
 - **安全能力：** 提供用户名密码认证、IP 白名单、SSRF / DNS Rebinding 防护、审计日志与事件日志。
-- **跨平台运行：** Linux / macOS 默认进入 Web 模式，Windows 优先托盘模式。
+- **跨平台运行：** Windows 优先托盘模式；Linux / macOS 使用 `web` 命令显式启动本地 Web 管理界面。
 
 ## 功能总览
 
@@ -18,7 +18,7 @@ Go Proxy Server 是一个使用 Go 编写的自托管服务，单个二进制同
 
 - 支持 SOCKS5 代理
 - 支持 HTTP/HTTPS 代理
-- 用户名/密码认证，密码使用带随机盐的 SHA-256 存储
+- 用户名/密码认证：为降低高频代理认证的计算开销，代理用户有意采用单轮随机盐 SHA-256；本地 Web 管理员使用 Argon2id，具体威胁模型与取舍见[密码哈希设计决策](SECURITY.zh-CN.md#密码哈希设计决策)
 - 支持 IP 白名单
 - 支持多出口 IP 场景下的 `-bind-listen`
 - 认证、超时与限流配置支持运行时热更新
@@ -51,16 +51,16 @@ Go Proxy Server 是一个使用 Go 编写的自托管服务，单个二进制同
 
 ### 平台行为
 
-- Linux / macOS：无参数启动时进入本地 Web 管理模式
+- Linux / macOS：无参数启动时输出命令帮助；使用 `web` 显式启动本地 Web 管理模式
 - Windows：无参数启动时优先尝试系统托盘模式
-- 无参数启动会恢复已保存且启用了 `AutoStart` 的代理服务
-- 无参数启动也可能恢复已保存且启用了 `AutoStart` 的 `tunnel-server` 与 `tunnel-client` 配置
+- Windows 默认模式会恢复已保存且启用了 `AutoStart` 的代理服务
+- Windows 默认模式也可能恢复已保存且启用了 `AutoStart` 的 `tunnel-server` 与 `tunnel-client` 配置
 
 ## 运行模式总览
 
 | 模式 | 命令 | 作用 |
 | --- | --- | --- |
-| 默认模式 | `./bin/go-proxy-server` | Linux/macOS 启动 Web 后台，Windows 启动托盘或回退到 Web 模式 |
+| 默认模式 | `./bin/go-proxy-server` | Windows 启动托盘或回退到 Web 模式；Linux/macOS 输出帮助 |
 | Web 管理 | `./bin/go-proxy-server web` | 启动仅监听 `localhost` 的 Web 后台 |
 | SOCKS5 | `./bin/go-proxy-server socks` | 前台启动 SOCKS5 代理 |
 | HTTP | `./bin/go-proxy-server http` | 前台启动 HTTP/HTTPS 代理 |

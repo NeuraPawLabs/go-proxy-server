@@ -142,7 +142,7 @@ func (wm *Manager) setAdminPassword(password string) error {
 	if len(password) < 8 {
 		return fmt.Errorf("admin password must be at least 8 characters")
 	}
-	hash, err := auth.HashPassword([]byte(password))
+	hash, err := auth.HashAdminPassword([]byte(password))
 	if err != nil {
 		return fmt.Errorf("hash admin password: %w", err)
 	}
@@ -172,7 +172,7 @@ func (wm *Manager) bootstrapAdminPassword(password, bootstrapToken string) error
 		return errInvalidBootstrapToken
 	}
 
-	hash, err := auth.HashPassword([]byte(password))
+	hash, err := auth.HashAdminPassword([]byte(password))
 	if err != nil {
 		return fmt.Errorf("hash admin password: %w", err)
 	}
@@ -195,7 +195,19 @@ func (wm *Manager) verifyAdminPassword(password string) (bool, error) {
 	if storedHash == "" {
 		return false, errors.New("admin password is not configured")
 	}
-	return auth.VerifyPasswordHash([]byte(storedHash), []byte(password)), nil
+	valid, needsUpgrade := auth.VerifyAdminPasswordHash([]byte(storedHash), []byte(password))
+	if !valid || !needsUpgrade {
+		return valid, nil
+	}
+
+	upgradedHash, err := auth.HashAdminPassword([]byte(password))
+	if err != nil {
+		return false, fmt.Errorf("upgrade admin password hash: %w", err)
+	}
+	if err := config.SetSystemConfig(wm.db, config.KeyWebAdminPassword, string(upgradedHash)); err != nil {
+		return false, fmt.Errorf("persist upgraded admin password hash: %w", err)
+	}
+	return true, nil
 }
 
 func (wm *Manager) issueAdminSession(w http.ResponseWriter) error {

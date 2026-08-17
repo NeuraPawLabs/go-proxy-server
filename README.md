@@ -10,7 +10,7 @@ Go Proxy Server is a self-hosted Go service that combines local proxy access, a 
 - **Web admin:** Manage users, allowlists, logs, proxy config, and tunnel routes from a local Web UI.
 - **Tunnel control plane:** Run one `tunnel-server` and manage multiple long-lived `tunnel-client` agents.
 - **Security features:** Username/password auth, IP allowlist, SSRF and DNS rebinding protection, audit logs, and event logs.
-- **Cross-platform runtime:** Linux and macOS default to Web mode, Windows prefers tray mode.
+- **Cross-platform runtime:** Windows prefers tray mode; on Linux and macOS, use the explicit `web` command to start the local Web UI.
 
 ## Capability Overview
 
@@ -18,7 +18,7 @@ Go Proxy Server is a self-hosted Go service that combines local proxy access, a 
 
 - SOCKS5 proxy support
 - HTTP/HTTPS proxy support
-- Username/password authentication with salted SHA-256 storage
+- Username/password authentication: proxy users use deliberately selected single-pass salted SHA-256 for low-overhead, high-frequency authentication, while the local Web administrator uses Argon2id; see the [password hashing design decision](SECURITY.md#password-hashing-design-decision)
 - IP allowlist support
 - Optional `-bind-listen` mode for multi-address hosts
 - Runtime reload for auth, timeout, and limiter configuration
@@ -51,16 +51,16 @@ Go Proxy Server is a self-hosted Go service that combines local proxy access, a 
 
 ### Platform Behavior
 
-- Linux/macOS: no-argument startup launches the local Web admin UI
+- Linux/macOS: no-argument startup prints command usage; use `web` to launch the local Web admin UI
 - Windows: no-argument startup prefers tray mode, then falls back to Web mode
-- No-argument startup restores saved proxy services marked with `AutoStart`
-- No-argument startup may also restore saved `tunnel-server` and `tunnel-client` configs marked with `AutoStart`
+- Windows default-mode startup restores saved proxy services marked with `AutoStart`
+- Windows default-mode startup may also restore saved `tunnel-server` and `tunnel-client` configs marked with `AutoStart`
 
 ## Runtime Modes
 
 | Mode | Command | What it does |
 | --- | --- | --- |
-| Default | `./bin/go-proxy-server` | Starts Web admin on Linux/macOS, tray or Web mode on Windows |
+| Default | `./bin/go-proxy-server` | Prints usage on Linux/macOS; starts tray or Web mode on Windows |
 | Web admin | `./bin/go-proxy-server web` | Starts the localhost-only Web UI |
 | SOCKS5 | `./bin/go-proxy-server socks` | Starts a foreground SOCKS5 proxy |
 | HTTP | `./bin/go-proxy-server http` | Starts a foreground HTTP/HTTPS proxy |

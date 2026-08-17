@@ -481,6 +481,40 @@ func TestManagedStoreRejectsInvalidRouteWhitelist(t *testing.T) {
 	}
 }
 
+func TestManagedServerDoesNotApplyRoutesToClosedSession(t *testing.T) {
+	server := NewManagedServer(nil, "127.0.0.1:0", "127.0.0.1", "secret-token")
+	server.Store = nil
+
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	session := &managedClientSession{
+		server:      server,
+		name:        "agent-1",
+		controlConn: serverConn,
+		routes:      make(map[string]*managedRouteListener),
+	}
+	session.close()
+
+	err := server.applyRoutes(session, []ManagedRoute{{
+		Name:       "echo",
+		TargetAddr: "127.0.0.1:8080",
+		Enabled:    true,
+		Protocol:   ProtocolTCP,
+	}})
+	if err != nil {
+		t.Fatalf("apply routes to closed session: %v", err)
+	}
+
+	session.routesMu.Lock()
+	defer session.routesMu.Unlock()
+	if len(session.routes) != 0 {
+		for _, route := range session.routes {
+			route.close()
+		}
+		t.Fatalf("expected no routes to be applied to closed session, got %d", len(session.routes))
+	}
+}
+
 func TestManagedTunnelServerReusesAssignedAutoPortAfterRestart(t *testing.T) {
 	db := newManagedTestDB(t)
 	serverTLS, clientTLS := newTestTLSConfigs(t)

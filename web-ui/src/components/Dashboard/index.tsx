@@ -11,7 +11,16 @@ import {
   LinkOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { Line } from '@ant-design/charts';
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { getProxyStatus } from '../../api/proxy';
 import { getUsers } from '../../api/user';
 import { getWhitelist } from '../../api/whitelist';
@@ -22,12 +31,6 @@ import type { MetricsSnapshot, MetricsHistory } from '../../types/metrics';
 import type { TunnelClient, TunnelRoute, TunnelServerStatus } from '../../types/tunnel';
 
 const { Title, Text } = Typography;
-
-interface ChartTooltipItem {
-  value: number;
-  color: string;
-  name: string;
-}
 
 function boolTag(value?: boolean): React.ReactNode {
   return <Tag color={value ? 'success' : 'default'}>{value ? '开' : '关'}</Tag>;
@@ -61,10 +64,10 @@ const Dashboard: React.FC = () => {
   };
 
   // Get optimal unit based on maximum speed value
-  const getOptimalSpeedUnit = (data: typeof bandwidthData): { unit: string; divisor: number; decimals: number } => {
-    if (data.length === 0) return { unit: 'B/s', divisor: 1, decimals: 0 };
+  const getOptimalSpeedUnit = (values: number[]): { unit: string; divisor: number; decimals: number } => {
+    if (values.length === 0) return { unit: 'B/s', divisor: 1, decimals: 0 };
 
-    const maxValue = Math.max(...data.map(d => d.value));
+    const maxValue = Math.max(...values);
 
     if (maxValue === 0) return { unit: 'B/s', divisor: 1, decimals: 0 };
     if (maxValue < 1024) return { unit: 'B/s', divisor: 1, decimals: 0 };
@@ -147,18 +150,11 @@ const Dashboard: React.FC = () => {
     .join(' / ');
 
   // Prepare chart data
-  const bandwidthData = metricsHistory.map((h) => ([
-    {
-      time: new Date(h.Timestamp * 1000).toLocaleTimeString(),
-      value: h.UploadSpeed, // Keep as bytes/sec for accurate formatting
-      type: '上传速度',
-    },
-    {
-      time: new Date(h.Timestamp * 1000).toLocaleTimeString(),
-      value: h.DownloadSpeed, // Keep as bytes/sec for accurate formatting
-      type: '下载速度',
-    },
-  ])).flat();
+  const bandwidthData = metricsHistory.map((h) => ({
+    time: new Date(h.Timestamp * 1000).toLocaleTimeString(),
+    upload: h.UploadSpeed,
+    download: h.DownloadSpeed,
+  }));
 
   const connectionsData = metricsHistory.map((h) => ({
     time: new Date(h.Timestamp * 1000).toLocaleTimeString(),
@@ -166,77 +162,9 @@ const Dashboard: React.FC = () => {
   }));
 
   // Get optimal unit for bandwidth chart
-  const speedUnit = getOptimalSpeedUnit(bandwidthData);
-
-  const bandwidthConfig = {
-    data: bandwidthData,
-    xField: 'time',
-    yField: 'value',
-    seriesField: 'type',
-    shapeField: 'smooth',
-    animation: false,
-    colorField: 'type',
-    scale: {
-      color: {
-        range: ['#10b981', '#3b82f6'], // Vibrant green for upload, blue for download
-      },
-      y: {
-        nice: true,
-      },
-    },
-    axis: {
-      y: {
-        labelFormatter: (v: number) => {
-          return `${(v / speedUnit.divisor).toFixed(speedUnit.decimals)} ${speedUnit.unit}`;
-        },
-      },
-    },
-    interaction: {
-      tooltip: {
-        render: (
-          _event: unknown,
-          {
-            title,
-            items,
-          }: { title?: string; items?: ChartTooltipItem[] },
-        ) => {
-          if (!items || items.length === 0) return '';
-          return `
-            <div style="padding: 8px 12px;">
-              <div style="margin-bottom: 8px; font-weight: 500;">${title}</div>
-              ${items.map((item) => {
-                const speed = formatSpeed(item.value);
-                return `
-                  <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${item.color}; margin-right: 8px;"></span>
-                    <span style="margin-right: 8px;">${item.name}:</span>
-                    <span style="font-weight: 500;">${speed}</span>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          `;
-        },
-      },
-    },
-    style: {
-      lineWidth: 2,
-    },
-  };
-
-  const connectionsConfig = {
-    data: connectionsData,
-    xField: 'time',
-    yField: 'value',
-    smooth: true,
-    color: '#5B8FF9',
-    animation: false, // Disable animation to prevent flashing on data updates
-    yAxis: {
-      label: {
-        formatter: (v: string) => `${v} 个`,
-      },
-    },
-  };
+  const speedUnit = getOptimalSpeedUnit(
+    bandwidthData.flatMap((point) => [point.upload, point.download])
+  );
 
   const panelCardStyle = {
     borderRadius: 14,
@@ -559,7 +487,21 @@ const Dashboard: React.FC = () => {
             style={panelCardStyle}
             styles={compactCardStyles}
           >
-            <Line {...bandwidthConfig} height={260} />
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={bandwidthData} margin={{ top: 8, right: 20, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" minTickGap={32} />
+                <YAxis
+                  tickFormatter={(value) => (
+                    `${(Number(value) / speedUnit.divisor).toFixed(speedUnit.decimals)} ${speedUnit.unit}`
+                  )}
+                />
+                <Tooltip formatter={(value) => formatSpeed(Number(value))} />
+                <Legend />
+                <Line type="monotone" dataKey="upload" name="上传速度" stroke="#10b981" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="download" name="下载速度" stroke="#3b82f6" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </Card>
         </Col>
 
@@ -571,7 +513,15 @@ const Dashboard: React.FC = () => {
             style={panelCardStyle}
             styles={compactCardStyles}
           >
-            <Line {...connectionsConfig} height={260} />
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={connectionsData} margin={{ top: 8, right: 20, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" minTickGap={32} />
+                <YAxis tickFormatter={(value) => `${value} 个`} allowDecimals={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="value" name="活跃连接" stroke="#5B8FF9" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </Card>
         </Col>
       </Row>

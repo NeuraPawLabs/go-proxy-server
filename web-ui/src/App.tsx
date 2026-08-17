@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Button, Layout, Menu, Space, Spin, theme } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -14,15 +14,6 @@ import {
   SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import Dashboard from './components/Dashboard';
-import ProxyControl from './components/ProxyControl';
-import UserManagement from './components/UserManagement';
-import WhitelistManagement from './components/WhitelistManagement';
-import ConfigManagement from './components/ConfigManagement';
-import TunnelManagement from './components/TunnelManagement';
-import TunnelClientDetail from './components/TunnelClientDetail';
-import AdminAuth from './components/AdminAuth';
-import ActivityLogs from './components/ActivityLogs';
 import {
   getAdminSession,
   bootstrapAdmin,
@@ -37,6 +28,16 @@ import './App.css';
 import type { LoginPayload } from './types/admin';
 
 const { Header, Sider, Content } = Layout;
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const ProxyControl = lazy(() => import('./components/ProxyControl'));
+const UserManagement = lazy(() => import('./components/UserManagement'));
+const WhitelistManagement = lazy(() => import('./components/WhitelistManagement'));
+const ConfigManagement = lazy(() => import('./components/ConfigManagement'));
+const TunnelManagement = lazy(() => import('./components/TunnelManagement'));
+const TunnelClientDetail = lazy(() => import('./components/TunnelClientDetail'));
+const AdminAuth = lazy(() => import('./components/AdminAuth'));
+const ActivityLogs = lazy(() => import('./components/ActivityLogs'));
 
 interface AuthState {
   loading: boolean;
@@ -300,14 +301,16 @@ const App: React.FC = () => {
 
   if (!authState.authenticated) {
     return (
-      <AdminAuth
-        bootstrapNeeded={authState.bootstrapNeeded}
-        submitting={authSubmitting}
-        error={authError}
-        geetestId={authState.geetestId}
-        captchaError={authState.captchaError}
-        onSubmit={handleAuthSubmit}
-      />
+      <Suspense fallback={<div className="app-loading-shell"><Spin size="large" /></div>}>
+        <AdminAuth
+          bootstrapNeeded={authState.bootstrapNeeded}
+          submitting={authSubmitting}
+          error={authError}
+          geetestId={authState.geetestId}
+          captchaError={authState.captchaError}
+          onSubmit={handleAuthSubmit}
+        />
+      </Suspense>
     );
   }
 
@@ -399,7 +402,9 @@ const App: React.FC = () => {
           }}
         >
           <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
-            {renderContent()}
+            <Suspense fallback={<div className="app-loading-shell"><Spin size="large" /></div>}>
+              {renderContent()}
+            </Suspense>
           </div>
         </Content>
       </Layout>

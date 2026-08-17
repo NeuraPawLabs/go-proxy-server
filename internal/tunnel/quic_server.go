@@ -36,9 +36,11 @@ type QUICManagedServer struct {
 	listener  *quic.Listener
 	errCh     chan error
 	closeOnce sync.Once
+	wg        sync.WaitGroup
 
 	mu      sync.Mutex
 	clients map[string]*quicManagedClientSession
+	closed  bool
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*managedSessionRecord
@@ -121,6 +123,9 @@ func NewQUICManagedServer(db *gorm.DB, controlAddr, publicBindAddr, token string
 }
 
 func (s *QUICManagedServer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s.Token == "" {
 		return fmt.Errorf("tunnel token is required")
 	}
@@ -157,14 +162,23 @@ func (s *QUICManagedServer) Start(ctx context.Context) error {
 	addr := listener.Addr()
 	s.listener = listener
 	s.ControlAddr = addr.String()
+	runCtx, cancel := context.WithCancel(ctx)
 
+	s.wg.Add(3)
 	go func() {
-		<-ctx.Done()
+		defer s.wg.Done()
+		<-runCtx.Done()
 		s.close()
 	}()
-	go s.syncLoop(ctx)
 	go func() {
-		s.errCh <- s.serve(ctx)
+		defer s.wg.Done()
+		s.syncLoop(runCtx)
+	}()
+	go func() {
+		defer s.wg.Done()
+		err := s.serve(runCtx)
+		cancel()
+		s.errCh <- err
 	}()
 
 	applogger.Info("QUIC managed tunnel server listening on %s", s.ControlAddr)
@@ -173,6 +187,7 @@ func (s *QUICManagedServer) Start(ctx context.Context) error {
 
 func (s *QUICManagedServer) Wait() error {
 	err := <-s.errCh
+	s.wg.Wait()
 	if err == nil || errors.Is(err, net.ErrClosed) {
 		return nil
 	}
@@ -236,7 +251,11 @@ func (s *QUICManagedServer) serve(ctx context.Context) error {
 			continue
 		}
 		consecutiveErrors = 0
-		go s.handleConn(ctx, conn)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.handleConn(ctx, conn)
+		}()
 	}
 }
 
@@ -279,7 +298,11 @@ func (s *QUICManagedServer) handleConn(ctx context.Context, conn *quic.Conn) {
 		applogger.Warn("Initial QUIC tunnel route sync failed for %s: %v", session.name, err)
 	}
 
-	go s.receiveClientDatagrams(ctx, session)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.receiveClientDatagrams(ctx, session)
+	}()
 
 	for {
 		var msg controlMessage
@@ -315,6 +338,10 @@ func (s *QUICManagedServer) registerClient(conn *quic.Conn, controlStream *quic.
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, net.ErrClosed
+	}
 	existing := s.clients[hello.ClientName]
 	s.clients[hello.ClientName] = session
 	s.mu.Unlock()
@@ -440,6 +467,9 @@ func (s *QUICManagedServer) syncSessionRoutes(session *quicManagedClientSession)
 }
 
 func (s *QUICManagedServer) applyRoutes(session *quicManagedClientSession, routes []ManagedRoute) error {
+	if session == nil || session.isClosed() {
+		return nil
+	}
 	desired := make(map[string]ManagedRoute, len(routes))
 	for _, route := range routes {
 		desired[route.Name] = route
@@ -453,6 +483,9 @@ func (s *QUICManagedServer) applyRoutes(session *quicManagedClientSession, route
 	session.routesMu.Unlock()
 
 	for name, currentRoute := range current {
+		if session.isClosed() {
+			return nil
+		}
 		currentConfig := currentRoute.getRoute()
 		route, ok := desired[name]
 		if !ok || !route.Enabled || route.TargetAddr == "" || route.PublicPort != currentConfig.PublicPort || route.Protocol != currentConfig.Protocol {
@@ -469,6 +502,9 @@ func (s *QUICManagedServer) applyRoutes(session *quicManagedClientSession, route
 	}
 
 	for _, route := range routes {
+		if session.isClosed() {
+			return nil
+		}
 		if !route.Enabled || route.TargetAddr == "" {
 			if s.Store != nil {
 				_ = s.Store.UpdateRouteRuntime(session.name, route.Name, 0, "")
@@ -510,6 +546,11 @@ func (s *QUICManagedServer) applyRoutes(session *quicManagedClientSession, route
 		}
 
 		session.routesMu.Lock()
+		if session.closed {
+			session.routesMu.Unlock()
+			created.close()
+			return nil
+		}
 		session.routes[route.Name] = created
 		session.routesMu.Unlock()
 		if s.Store != nil {
@@ -529,7 +570,11 @@ func (s *QUICManagedServer) applyRoutes(session *quicManagedClientSession, route
 			UDPMaxPayload:     route.UDPMaxPayload,
 		})
 	}
-	return session.writeControl(controlMessage{Type: messageSyncRoutes, Routes: payload})
+	err := session.writeControl(controlMessage{Type: messageSyncRoutes, Routes: payload})
+	if err != nil && session.isClosed() {
+		return nil
+	}
+	return err
 }
 
 func (s *QUICManagedServer) newRouteBinding(session *quicManagedClientSession, route ManagedRoute) (quicManagedRouteBinding, error) {
@@ -665,6 +710,7 @@ func (s *QUICManagedServer) close() {
 			_ = s.listener.Close()
 		}
 		s.mu.Lock()
+		s.closed = true
 		sessions := make([]*quicManagedClientSession, 0, len(s.clients))
 		for _, session := range s.clients {
 			sessions = append(sessions, session)
@@ -733,6 +779,12 @@ func (s *quicManagedClientSession) close() {
 	if s.conn != nil {
 		_ = s.conn.CloseWithError(0, "")
 	}
+}
+
+func (s *quicManagedClientSession) isClosed() bool {
+	s.routesMu.Lock()
+	defer s.routesMu.Unlock()
+	return s.closed
 }
 
 func (r *quicManagedTCPRoute) publicPort() int {

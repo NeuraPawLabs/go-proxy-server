@@ -39,9 +39,11 @@ type ManagedServer struct {
 	listener  net.Listener
 	errCh     chan error
 	closeOnce sync.Once
+	wg        sync.WaitGroup
 
 	mu      sync.Mutex
 	clients map[string]*managedClientSession
+	closed  bool
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*managedSessionRecord
@@ -57,6 +59,7 @@ type managedClientSession struct {
 	routesMu sync.Mutex
 	routes   map[string]*managedRouteListener
 	closed   bool
+	done     chan struct{}
 }
 
 type managedRouteListener struct {
@@ -95,6 +98,9 @@ func NewManagedServer(db *gorm.DB, controlAddr, publicBindAddr, token string) *M
 }
 
 func (s *ManagedServer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s.Token == "" {
 		return fmt.Errorf("tunnel token is required")
 	}
@@ -136,14 +142,23 @@ func (s *ManagedServer) Start(ctx context.Context) error {
 
 	s.listener = listener
 	s.ControlAddr = rawListener.Addr().String()
+	runCtx, cancel := context.WithCancel(ctx)
 
+	s.wg.Add(3)
 	go func() {
-		<-ctx.Done()
+		defer s.wg.Done()
+		<-runCtx.Done()
 		s.close()
 	}()
-	go s.syncLoop(ctx)
 	go func() {
-		s.errCh <- s.serve()
+		defer s.wg.Done()
+		s.syncLoop(runCtx)
+	}()
+	go func() {
+		defer s.wg.Done()
+		err := s.serve()
+		cancel()
+		s.errCh <- err
 	}()
 
 	applogger.Info("Managed tunnel server listening on %s", s.ControlAddr)
@@ -152,6 +167,7 @@ func (s *ManagedServer) Start(ctx context.Context) error {
 
 func (s *ManagedServer) Wait() error {
 	err := <-s.errCh
+	s.wg.Wait()
 	if err == nil || errors.Is(err, net.ErrClosed) {
 		return nil
 	}
@@ -183,7 +199,11 @@ func (s *ManagedServer) serve() error {
 			continue
 		}
 		consecutiveErrors = 0
-		go s.handleConn(conn)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.handleConn(conn)
+		}()
 	}
 }
 
@@ -257,9 +277,14 @@ func (s *ManagedServer) registerClient(conn net.Conn, hs handshake) (*managedCli
 		remoteAddr:  conn.RemoteAddr().String(),
 		controlConn: conn,
 		routes:      make(map[string]*managedRouteListener),
+		done:        make(chan struct{}),
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, net.ErrClosed
+	}
 	existing := s.clients[clientName]
 	s.clients[clientName] = session
 	s.mu.Unlock()
@@ -273,7 +298,11 @@ func (s *ManagedServer) registerClient(conn net.Conn, hs handshake) (*managedCli
 			applogger.Warn("Failed to update tunnel client heartbeat for %s: %v", clientName, err)
 		}
 	}
-	go s.heartbeatLoop(session)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.heartbeatLoop(session)
+	}()
 	applogger.Info("Managed tunnel client %s connected from %s", clientName, session.remoteAddr)
 	activity.RecordEvent(activity.EventRecord{
 		Category:  "tunnel",
@@ -323,7 +352,12 @@ func (s *ManagedServer) unregisterClient(session *managedClientSession) {
 func (s *ManagedServer) heartbeatLoop(session *managedClientSession) {
 	ticker := time.NewTicker(s.HeartbeatInterval)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-session.done:
+			return
+		case <-ticker.C:
+		}
 		s.mu.Lock()
 		current := s.clients[session.name]
 		s.mu.Unlock()
@@ -392,6 +426,9 @@ func (s *ManagedServer) syncSessionRoutes(session *managedClientSession) error {
 }
 
 func (s *ManagedServer) applyRoutes(session *managedClientSession, routes []ManagedRoute) error {
+	if session == nil || session.isClosed() {
+		return nil
+	}
 	desired := make(map[string]ManagedRoute, len(routes))
 	for _, route := range routes {
 		desired[route.Name] = route
@@ -405,6 +442,9 @@ func (s *ManagedServer) applyRoutes(session *managedClientSession, routes []Mana
 	session.routesMu.Unlock()
 
 	for name, currentRoute := range current {
+		if session.isClosed() {
+			return nil
+		}
 		currentConfig := currentRoute.getRoute()
 		route, ok := desired[name]
 		if !ok || !route.Enabled || route.TargetAddr == "" || route.PublicPort != currentConfig.PublicPort {
@@ -421,6 +461,9 @@ func (s *ManagedServer) applyRoutes(session *managedClientSession, routes []Mana
 	}
 
 	for _, route := range routes {
+		if session.isClosed() {
+			return nil
+		}
 		if !route.Enabled || route.TargetAddr == "" {
 			if s.Store != nil {
 				_ = s.Store.UpdateRouteRuntime(session.name, route.Name, 0, "")
@@ -467,6 +510,11 @@ func (s *ManagedServer) applyRoutes(session *managedClientSession, routes []Mana
 		}
 
 		session.routesMu.Lock()
+		if session.closed {
+			session.routesMu.Unlock()
+			created.close()
+			return nil
+		}
 		session.routes[route.Name] = created
 		session.routesMu.Unlock()
 		go created.acceptPublicConnections()
@@ -487,7 +535,11 @@ func (s *ManagedServer) applyRoutes(session *managedClientSession, routes []Mana
 			UDPMaxPayload:     route.UDPMaxPayload,
 		})
 	}
-	return session.writeControl(controlMessage{Type: messageSyncRoutes, Routes: payload})
+	err := session.writeControl(controlMessage{Type: messageSyncRoutes, Routes: payload})
+	if err != nil && session.isClosed() {
+		return nil
+	}
+	return err
 }
 
 func (s *ManagedServer) newRouteListener(session *managedClientSession, route ManagedRoute) (*managedRouteListener, error) {
@@ -673,6 +725,7 @@ func (s *ManagedServer) close() {
 			_ = s.listener.Close()
 		}
 		s.mu.Lock()
+		s.closed = true
 		sessions := make([]*managedClientSession, 0, len(s.clients))
 		for _, session := range s.clients {
 			sessions = append(sessions, session)
@@ -716,6 +769,15 @@ func (s *managedClientSession) close() {
 	if s.controlConn != nil {
 		_ = s.controlConn.Close()
 	}
+	if s.done != nil {
+		close(s.done)
+	}
+}
+
+func (s *managedClientSession) isClosed() bool {
+	s.routesMu.Lock()
+	defer s.routesMu.Unlock()
+	return s.closed
 }
 
 func (r *managedRouteListener) publicPort() int {

@@ -94,14 +94,12 @@ When run without arguments:
   - Web server runs in background on port 9090
   - Clicking "打开管理界面" opens browser to http://localhost:9090
 
-- **Linux/macOS**: Starts web server directly on port 9090
-  - Prints URL to console
-  - Runs in foreground
+- **Linux/macOS**: Prints command usage. Start the Web server explicitly with the `web` command.
 
 ```bash
 ./bin/go-proxy-server
 # Windows: System tray application
-# Other: Web server on http://localhost:9090
+# Other: Command usage
 ```
 
 ### Run Proxy Servers
@@ -151,13 +149,12 @@ When run without arguments:
 - Initializes configuration with default paths in user data directory
 - Initializes SQLite database with GORM
 - **Default behavior (no arguments)**:
-  - Windows: Attempts to start system tray application, falls back to web server if tray initialization fails
-  - Non-Windows: Starts web server directly on port 9090 (or random port if 9090 is occupied)
-  - Auto-starts proxies based on saved configuration (if `AutoStart` flag is set in database)
+  - Windows: Attempts to start system tray application, falls back to web server if tray initialization fails, and restores saved auto-start services
+  - Non-Windows: Prints command usage without initializing services
 - Routes to subcommands: socks, http, both, web, adduser, deluser, listuser, addip
 - Starts background goroutine for config reloading (every 30 seconds) in socks/http/both modes
 - For `both` command: runs SOCKS5 in goroutine, HTTP in main thread, shared config reload
-- For `web` command or no arguments: initializes web.Manager and starts web server
+- For the `web` command: initializes web.Manager and starts the web server
 - Cross-platform data directory support via `config.GetDataDir()` (Windows/macOS/Linux/XDG)
 - Windows single instance check prevents multiple instances from running simultaneously
 
