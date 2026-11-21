@@ -193,11 +193,7 @@ func (c *QUICManagedClient) dialServer(ctx context.Context) (*quic.Conn, error) 
 	tlsConfig := cloneQUICClientTLSConfig(c.TLSConfig)
 	dialCtx, cancel := context.WithTimeout(ctx, c.DialTimeout)
 	defer cancel()
-	return quic.DialAddr(dialCtx, c.ServerAddr, tlsConfig, &quic.Config{
-		EnableDatagrams: true,
-		KeepAlivePeriod: c.HeartbeatInterval,
-		MaxIdleTimeout:  2 * c.HeartbeatInterval,
-	})
+	return quic.DialAddr(dialCtx, c.ServerAddr, tlsConfig, managedQUICConfig(c.HeartbeatInterval))
 }
 
 func (c *QUICManagedClient) heartbeatLoop(ctx context.Context, stream *quic.Stream, errorCh chan<- error) {

@@ -3,11 +3,14 @@ package tunnel
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"io"
 )
 
 const (
-	managedQUICALPN = "gps-tunnel-quic/1"
+	managedQUICALPN    = "gps-tunnel-quic/3"
+	quicSessionIDBytes = 8
 
 	quicControlTypeRegister = "register"
 	quicControlTypeAck      = "ack"
@@ -63,15 +66,12 @@ func cloneBytes(src []byte) []byte {
 }
 
 func marshalQUICUDPServerDatagram(frame quicUDPServerDatagram) ([]byte, error) {
-	buf := bytes.NewBuffer(make([]byte, 0, 1+2+len(frame.SessionID)+2+len(frame.RouteName)+2+len(frame.SourceAddr)+2+len(frame.Payload)))
+	buf := bytes.NewBuffer(make([]byte, 0, 1+quicSessionIDBytes+2+len(frame.RouteName)+2+len(frame.Payload)))
 	buf.WriteByte(quicDatagramTypeServerToClient)
-	if err := writeFrameString(buf, frame.SessionID); err != nil {
+	if err := writeQUICSessionID(buf, frame.SessionID); err != nil {
 		return nil, err
 	}
 	if err := writeFrameString(buf, frame.RouteName); err != nil {
-		return nil, err
-	}
-	if err := writeFrameString(buf, frame.SourceAddr); err != nil {
 		return nil, err
 	}
 	if err := writeFrameBytes(buf, frame.Payload); err != nil {
@@ -90,13 +90,10 @@ func unmarshalQUICUDPServerDatagram(data []byte) (quicUDPServerDatagram, error) 
 	if msgType != quicDatagramTypeServerToClient {
 		return frame, fmt.Errorf("unexpected datagram type %d", msgType)
 	}
-	if frame.SessionID, err = readFrameString(reader); err != nil {
+	if frame.SessionID, err = readQUICSessionID(reader); err != nil {
 		return frame, err
 	}
 	if frame.RouteName, err = readFrameString(reader); err != nil {
-		return frame, err
-	}
-	if frame.SourceAddr, err = readFrameString(reader); err != nil {
 		return frame, err
 	}
 	if frame.Payload, err = readFrameBytes(reader); err != nil {
@@ -110,9 +107,9 @@ func marshalQUICUDPClientDatagram(frame quicUDPClientDatagram) ([]byte, error) {
 	if frame.Close {
 		msgType = quicDatagramTypeClose
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, 1+2+len(frame.SessionID)+2+len(frame.Payload)))
+	buf := bytes.NewBuffer(make([]byte, 0, 1+quicSessionIDBytes+2+len(frame.Payload)))
 	buf.WriteByte(msgType)
-	if err := writeFrameString(buf, frame.SessionID); err != nil {
+	if err := writeQUICSessionID(buf, frame.SessionID); err != nil {
 		return nil, err
 	}
 	if !frame.Close {
@@ -134,7 +131,7 @@ func unmarshalQUICUDPClientDatagram(data []byte) (quicUDPClientDatagram, error) 
 		return frame, fmt.Errorf("unexpected datagram type %d", msgType)
 	}
 	frame.Close = msgType == quicDatagramTypeClose
-	if frame.SessionID, err = readFrameString(reader); err != nil {
+	if frame.SessionID, err = readQUICSessionID(reader); err != nil {
 		return frame, err
 	}
 	if !frame.Close {
@@ -143,6 +140,26 @@ func unmarshalQUICUDPClientDatagram(data []byte) (quicUDPClientDatagram, error) 
 		}
 	}
 	return frame, nil
+}
+
+func writeQUICSessionID(buf *bytes.Buffer, value string) error {
+	if len(value) != quicSessionIDBytes*2 {
+		return fmt.Errorf("invalid session ID length")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		return fmt.Errorf("decode session ID: %w", err)
+	}
+	_, _ = buf.Write(decoded)
+	return nil
+}
+
+func readQUICSessionID(reader *bytes.Reader) (string, error) {
+	data := make([]byte, quicSessionIDBytes)
+	if _, err := io.ReadFull(reader, data); err != nil {
+		return "", fmt.Errorf("read session ID: %w", err)
+	}
+	return hex.EncodeToString(data), nil
 }
 
 func writeFrameString(buf *bytes.Buffer, value string) error {

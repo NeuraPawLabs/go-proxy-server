@@ -938,7 +938,7 @@ func (r *managedRouteListener) close() {
 }
 
 func newManagedConnectionID() (string, error) {
-	buf := make([]byte, 16)
+	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate connection ID: %w", err)
 	}

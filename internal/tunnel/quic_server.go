@@ -151,11 +151,7 @@ func (s *QUICManagedServer) Start(ctx context.Context) error {
 	}
 
 	tlsConfig := cloneQUICServerTLSConfig(s.TLSConfig)
-	listener, err := quic.ListenAddr(s.ControlAddr, tlsConfig, &quic.Config{
-		EnableDatagrams: true,
-		KeepAlivePeriod: s.HeartbeatInterval,
-		MaxIdleTimeout:  2 * s.HeartbeatInterval,
-	})
+	listener, err := quic.ListenAddr(s.ControlAddr, tlsConfig, managedQUICConfig(s.HeartbeatInterval))
 	if err != nil {
 		return fmt.Errorf("listen quic tunnel control address: %w", err)
 	}
@@ -938,7 +934,7 @@ func (r *quicManagedUDPRoute) serve() {
 			continue
 		}
 		if n > route.UDPMaxPayload {
-			applogger.Warn("QUIC managed UDP route %s/%s dropped oversized packet from %s", r.session.name, route.Name, addr)
+			applogger.Warn("QUIC managed UDP route %s/%s dropped oversized packet from %s: payload=%d max=%d", r.session.name, route.Name, addr, n, route.UDPMaxPayload)
 			continue
 		}
 		session := r.getOrCreateSession(addr, route)
@@ -954,7 +950,12 @@ func (r *quicManagedUDPRoute) serve() {
 			continue
 		}
 		if err := r.session.sendDatagram(payload); err != nil {
-			applogger.Warn("Send QUIC UDP datagram failed: %v", err)
+			var sizeErr *quic.DatagramTooLargeError
+			if errors.As(err, &sizeErr) {
+				applogger.Warn("Send QUIC UDP datagram failed: payload=%d max=%d: %v", len(payload), sizeErr.MaxDatagramPayloadSize, err)
+			} else {
+				applogger.Warn("Send QUIC UDP datagram failed: %v", err)
+			}
 		}
 		session.touch()
 	}
@@ -968,7 +969,7 @@ func (r *quicManagedUDPRoute) getOrCreateSession(addr *net.UDPAddr, route Manage
 	}
 	id, err := newManagedConnectionID()
 	if err != nil {
-		id = fmt.Sprintf("udp-%d", time.Now().UnixNano())
+		id = fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	}
 	record := newManagedSessionRecord(id, EngineQUIC, ProtocolUDP, r.session.name, route.Name, r.publicPort(), route.TargetAddr, addr.String())
 	r.session.server.trackActiveSession(record)
